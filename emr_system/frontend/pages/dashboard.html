@@ -2363,6 +2363,163 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
 
 }
 </script>
+<script src="/frontend/js/websocket.js"></script>
 
+<script>
+/* ============================================================
+   SYSTEM-WIDE REAL-TIME DASHBOARD EVENTS
+   ============================================================ */
+
+window.addEventListener(
+    "emr:websocket",
+    function (event) {
+
+        const data = event.detail;
+
+        console.log(
+            "📊 Dashboard received:",
+            data
+        );
+
+
+        switch (data.type) {
+
+            // ==================================================
+            // PATIENTS
+            // ==================================================
+
+            case "patient_created":
+            case "patient_updated":
+            case "patient_deleted":
+
+                loadDashboard();
+
+                break;
+
+
+            // ==================================================
+            // MEDICAL RECORDS / DIAGNOSIS
+            // ==================================================
+
+            case "medical_record_created":
+            case "medical_record_updated":
+            case "medical_record_deleted":
+
+                // Dashboard statistics
+                loadDashboard();
+
+                // Surveillance
+                if (
+                    typeof loadSurveillance === "function"
+                ) {
+                    loadSurveillance();
+                }
+
+                // Disease trends
+                if (
+                    typeof loadAnalytics === "function"
+                ) {
+                    loadAnalytics();
+                }
+
+                break;
+
+
+            // ==================================================
+            // DISEASE CASES
+            // ==================================================
+
+            case "disease_case_created":
+            case "disease_case_updated":
+            case "disease_case_deleted":
+
+                loadDashboard();
+
+                if (
+                    typeof loadSurveillance === "function"
+                ) {
+                    loadSurveillance();
+                }
+
+                if (
+                    typeof loadAnalytics === "function"
+                ) {
+                    loadAnalytics();
+                }
+
+                break;
+
+
+            // ==================================================
+            // IMMUNIZATION
+            // ==================================================
+
+            case "immunization_created":
+            case "immunization_updated":
+            case "immunization_deleted":
+
+                loadDashboard();
+
+                break;
+
+
+            // ==================================================
+            // PREGNANCY
+            // ==================================================
+
+            case "pregnancy_created":
+            case "pregnancy_updated":
+            case "pregnancy_deleted":
+
+                loadDashboard();
+
+                break;
+
+
+            // ==================================================
+            // HEALTH PROBLEMS
+            // ==================================================
+
+            case "health_problem_created":
+            case "health_problem_updated":
+            case "health_problem_deleted":
+
+                loadDashboard();
+
+                break;
+
+
+            // ==================================================
+            // INVENTORY
+            // ==================================================
+
+            case "inventory_created":
+            case "inventory_updated":
+            case "inventory_deleted":
+            case "inventory_stock_updated":
+
+                // Inventory changes can affect system statistics
+                loadDashboard();
+
+                break;
+
+
+            // ==================================================
+            // PRESCRIPTIONS
+            // ==================================================
+
+            case "prescription_created":
+            case "prescription_updated":
+            case "prescription_dispensed":
+
+                loadDashboard();
+
+                break;
+
+        }
+
+    }
+);
+</script>
 </body>
 </html>

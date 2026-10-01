@@ -1,183 +1,335 @@
 // ============================================================
 // websocket.js
-// Real-time WebSocket connection for the EMR system
+// CENTRAL EMR REAL-TIME WEBSOCKET
 // ============================================================
 
-let socket = null;
+(function () {
 
-function connectWebSocket() {
+    let socket = null;
+    let reconnectTimer = null;
+    let heartbeatTimer = null;
 
-    if (socket && socket.readyState === WebSocket.OPEN) {
-        console.log("🔌 WebSocket is already connected.");
-        return;
+    let manuallyClosed = false;
+
+    const RECONNECT_DELAY = 3000;
+    const HEARTBEAT_INTERVAL = 25000;
+
+
+    // ========================================================
+    // GET WEBSOCKET URL
+    // ========================================================
+
+    function getWebSocketUrl() {
+
+        const protocol =
+            window.location.protocol === "https:"
+                ? "wss:"
+                : "ws:";
+
+        return `${protocol}//${window.location.host}/ws`;
     }
 
-    const protocol =
-        window.location.protocol === "https:" ? "wss:" : "ws:";
 
-    const host = window.location.host;
+    // ========================================================
+    // CONNECT
+    // ========================================================
 
-    const wsUrl = `${protocol}//${host}/ws`;
+    function connectWebSocket() {
 
-    console.log("🔌 Connecting to WebSocket:", wsUrl);
+        if (manuallyClosed) {
+            return;
+        }
 
-    socket = new WebSocket(wsUrl);
+        if (
+            socket &&
+            (
+                socket.readyState === WebSocket.OPEN ||
+                socket.readyState === WebSocket.CONNECTING
+            )
+        ) {
+            return;
+        }
 
-    // Make it accessible from the browser console
-    window.socket = socket;
+        const url = getWebSocketUrl();
 
-    socket.onopen = function () {
-        console.log("✅ WebSocket connected!");
-    };
+        console.log(
+            "🔌 Connecting to EMR WebSocket:",
+            url
+        );
 
-    socket.onmessage = function (event) {
+        socket = new WebSocket(url);
 
-        console.log("🔥 WebSocket message received:", event.data);
 
-        try {
+        // ====================================================
+        // OPEN
+        // ====================================================
 
-            const data = JSON.parse(event.data);
+        socket.onopen = function () {
 
-            console.log("📨 Parsed WebSocket message:", data);
+            console.log(
+                "🟢 EMR WebSocket connected"
+            );
 
-            handleWebSocketMessage(data);
+            startHeartbeat();
 
-        } catch (error) {
+            window.dispatchEvent(
+                new CustomEvent(
+                    "emr:websocket-status",
+                    {
+                        detail: {
+                            connected: true
+                        }
+                    }
+                )
+            );
+        };
+
+
+        // ====================================================
+        // MESSAGE
+        // ====================================================
+
+        socket.onmessage = function (event) {
+
+            let data;
+
+            try {
+                data = JSON.parse(event.data);
+            }
+
+            catch (error) {
+
+                console.warn(
+                    "⚠️ Invalid WebSocket message:",
+                    event.data
+                );
+
+                return;
+            }
+
+
+            console.log(
+                "📡 EMR WebSocket event:",
+                data
+            );
+
+
+            // Ignore heartbeat response
+            if (data.type === "pong") {
+                return;
+            }
+
+
+            // ------------------------------------------------
+            // GLOBAL EVENT
+            // ------------------------------------------------
+
+            window.dispatchEvent(
+                new CustomEvent(
+                    "emr:websocket",
+                    {
+                        detail: data
+                    }
+                )
+            );
+
+
+            // ------------------------------------------------
+            // INVENTORY COMPATIBILITY
+            // ------------------------------------------------
+
+            if (
+                typeof window.handleInventoryWebSocketMessage
+                === "function"
+            ) {
+
+                window.handleInventoryWebSocketMessage(
+                    data
+                );
+            }
+
+        };
+
+
+        // ====================================================
+        // CLOSE
+        // ====================================================
+
+        socket.onclose = function () {
+
+            console.warn(
+                "🔴 EMR WebSocket disconnected"
+            );
+
+            stopHeartbeat();
+
+            window.dispatchEvent(
+                new CustomEvent(
+                    "emr:websocket-status",
+                    {
+                        detail: {
+                            connected: false
+                        }
+                    }
+                )
+            );
+
+
+            scheduleReconnect();
+        };
+
+
+        // ====================================================
+        // ERROR
+        // ====================================================
+
+        socket.onerror = function (error) {
 
             console.error(
-                "❌ Invalid WebSocket message:",
+                "❌ EMR WebSocket error:",
                 error
             );
 
-        }
-    };
-
-    socket.onclose = function () {
-
-        console.log("🔌 WebSocket disconnected.");
-
-        socket = null;
-        window.socket = null;
-
-        setTimeout(connectWebSocket, 3000);
-    };
-
-    socket.onerror = function (error) {
-
-        console.error(
-            "❌ WebSocket error:",
-            error
-        );
-
-    };
-}
-
-
-function handleWebSocketMessage(data) {
-
-    switch (data.type) {
-
-        case "pong":
-
-            console.log(
-                "🏓 Server response:",
-                data.message
-            );
-
-            break;
-
-
-        case "patient_created":
-
-            console.log(
-                "👤 New patient created:",
-                data.patient
-            );
-
-            if (typeof runSearch === "function") {
-    runSearch();
-}
-
-            if (typeof showToast === "function") {
-                showToast(
-                    "👤 A new patient was registered.",
-                    "success"
-                );
-            }
-
-            break;
-
-
-        case "patient_updated":
-
-            console.log(
-                "✏️ Patient updated:",
-                data.patient
-            );
-
-            if (typeof runSearch === "function") {
-    runSearch();
-}
-
-            if (typeof showToast === "function") {
-                showToast(
-                    "✏️ A patient record was updated.",
-                    "success"
-                );
-            }
-
-            break;
-
-
-        case "patient_deleted":
-
-            console.log(
-                "🗑️ Patient archived:",
-                data.patient_id
-            );
-
-            if (typeof runSearch === "function") {
-    runSearch();
-}
-
-            if (typeof showToast === "function") {
-                showToast(
-                    "🗑️ A patient record was archived.",
-                    "warning"
-                );
-            }
-
-            break;
-
-
-        default:
-
-            console.log(
-                "📨 Unknown WebSocket event:",
-                data
-            );
+        };
     }
-}
 
 
-function sendWebSocketMessage(message) {
+    // ========================================================
+    // HEARTBEAT
+    // ========================================================
+
+    function startHeartbeat() {
+
+        stopHeartbeat();
+
+        heartbeatTimer = setInterval(
+            function () {
+
+                if (
+                    socket &&
+                    socket.readyState === WebSocket.OPEN
+                ) {
+
+                    socket.send(
+                        JSON.stringify({
+                            type: "ping"
+                        })
+                    );
+
+                }
+
+            },
+            HEARTBEAT_INTERVAL
+        );
+    }
+
+
+    function stopHeartbeat() {
+
+        if (heartbeatTimer) {
+
+            clearInterval(
+                heartbeatTimer
+            );
+
+            heartbeatTimer = null;
+        }
+    }
+
+
+    // ========================================================
+    // RECONNECT
+    // ========================================================
+
+    function scheduleReconnect() {
+
+        if (manuallyClosed) {
+            return;
+        }
+
+        if (reconnectTimer) {
+            return;
+        }
+
+        reconnectTimer = setTimeout(
+            function () {
+
+                reconnectTimer = null;
+
+                connectWebSocket();
+
+            },
+            RECONNECT_DELAY
+        );
+    }
+
+
+    // ========================================================
+    // PUBLIC API
+    // ========================================================
+
+    window.EMRWebSocket = {
+
+        connect: connectWebSocket,
+
+        disconnect: function () {
+
+            manuallyClosed = true;
+
+            stopHeartbeat();
+
+            if (socket) {
+                socket.close();
+            }
+
+        },
+
+        send: function (data) {
+
+            if (
+                socket &&
+                socket.readyState === WebSocket.OPEN
+            ) {
+
+                socket.send(
+                    JSON.stringify(data)
+                );
+
+            }
+
+        },
+
+        isConnected: function () {
+
+            return (
+                socket &&
+                socket.readyState === WebSocket.OPEN
+            );
+
+        }
+
+    };
+
+
+    // ========================================================
+    // AUTO START
+    // ========================================================
 
     if (
-        !socket ||
-        socket.readyState !== WebSocket.OPEN
+        document.readyState === "loading"
     ) {
 
-        console.warn(
-            "⚠️ WebSocket is not connected."
+        document.addEventListener(
+            "DOMContentLoaded",
+            connectWebSocket
         );
 
-        return;
     }
 
-    socket.send(
-        JSON.stringify(message)
-    );
-}
+    else {
 
+        connectWebSocket();
 
-connectWebSocket();
+    }
+
+})();

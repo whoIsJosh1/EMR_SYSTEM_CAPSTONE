@@ -1,5 +1,5 @@
 from datetime import datetime
-
+from websocket_manager import manager
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -237,6 +237,16 @@ async def create_prescription(
         db.commit()
         db.refresh(prescription)
 
+        await manager.broadcast_event(
+            "prescription_created",
+            "prescription",
+            "created",
+            prescription_id=prescription.prescription_id,
+            record_id=prescription.record_id,
+            patient_id=prescription.patient_id,
+            item_id=prescription.item_id,
+            quantity=prescription.quantity,
+            user_id=current_user.user_id)
     except Exception:
         db.rollback()
 
@@ -381,6 +391,26 @@ async def dispense_prescription(
 
     try:
         db.commit()
+        await manager.broadcast_event(
+            "prescription_dispensed",
+            "prescription",
+            "dispensed",
+            prescription_id=prescription.prescription_id,
+            record_id=prescription.record_id,
+            patient_id=prescription.patient_id,
+            item_id=prescription.item_id,
+            quantity=dispense_quantity,
+            user_id=current_user.user_id
+        )
+
+        await manager.broadcast_event(
+            "inventory_stock_updated",
+            "inventory",
+            "stock_updated",
+            item_id=item.item_id,
+            current_stock=item.current_stock,
+            user_id=current_user.user_id
+        )
 
         db.refresh(prescription)
         db.refresh(item)

@@ -2638,5 +2638,195 @@ document.addEventListener('DOMContentLoaded', async () => {
     </div>
 </div>
 </div>
+<script src="/frontend/js/websocket.js"></script>
+
+<script>
+/* ============================================================
+   PATIENT PAGE REAL-TIME EVENTS
+   ============================================================ */
+
+window.addEventListener(
+    "emr:websocket",
+    async function (event) {
+
+        const data = event.detail;
+
+        console.log(
+            "👤 Patients WebSocket event:",
+            data
+        );
+
+
+        switch (data.type) {
+
+            // ==================================================
+            // PATIENT CHANGES
+            // ==================================================
+
+            case "patient_created":
+            case "patient_updated":
+            case "patient_deleted":
+
+                await runSearch();
+
+                if (
+                    currentPatientId &&
+                    Number(data.patient_id)
+                    === Number(currentPatientId)
+                ) {
+
+                    await openProfile(
+                        currentPatientId
+                    );
+
+                }
+
+                break;
+
+
+            // ==================================================
+            // MEDICAL RECORD
+            // ==================================================
+
+            case "medical_record_created":
+            case "medical_record_updated":
+            case "medical_record_deleted":
+
+                if (
+                    currentPatientId &&
+                    data.patient_id &&
+                    Number(data.patient_id)
+                    === Number(currentPatientId)
+                ) {
+
+                    await loadMedicalHistory(
+                        currentPatientId
+                    );
+
+                }
+
+                break;
+
+
+            // ==================================================
+            // PRESCRIPTION
+            // ==================================================
+
+            case "prescription_created":
+            case "prescription_updated":
+            case "prescription_dispensed":
+
+                if (
+                    currentPatientId &&
+                    data.patient_id &&
+                    Number(data.patient_id)
+                    === Number(currentPatientId)
+                ) {
+
+                    await loadMedicalHistory(
+                        currentPatientId
+                    );
+
+                }
+
+                break;
+
+
+            // ==================================================
+            // IMMUNIZATION
+            // ==================================================
+
+            case "immunization_created":
+            case "immunization_updated":
+            case "immunization_deleted":
+
+                if (
+                    currentPatientId &&
+                    data.patient_id &&
+                    Number(data.patient_id)
+                    === Number(currentPatientId)
+                ) {
+
+                    await loadImmunizations(
+                        currentPatientId
+                    );
+
+                }
+
+                break;
+
+
+            // ==================================================
+            // HEALTH PROBLEMS
+            // ==================================================
+
+            case "health_problem_created":
+            case "health_problem_updated":
+            case "health_problem_deleted":
+
+                if (
+                    currentPatientId &&
+                    data.patient_id &&
+                    Number(data.patient_id)
+                    === Number(currentPatientId)
+                ) {
+
+                    await loadHealthProblems(
+                        currentPatientId
+                    );
+
+                }
+
+                break;
+
+
+            // ==================================================
+            // PREGNANCY
+            // ==================================================
+
+            case "pregnancy_created":
+            case "pregnancy_updated":
+            case "pregnancy_deleted":
+
+                if (
+                    currentPatientId &&
+                    data.patient_id &&
+                    Number(data.patient_id)
+                    === Number(currentPatientId)
+                ) {
+
+                    await loadPregnancy(
+                        currentPatientId
+                    );
+
+                }
+
+                break;
+
+
+            // ==================================================
+            // INVENTORY
+            // ==================================================
+
+            case "inventory_stock_updated":
+
+                // Refresh prescription choices
+                // if doctor is currently working
+                if (
+                    typeof loadPrescriptionInventory
+                    === "function"
+                ) {
+
+                    await loadPrescriptionInventory();
+
+                }
+
+                break;
+
+        }
+
+    }
+);
+</script>
 </body>
 </html>

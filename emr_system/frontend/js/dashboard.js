@@ -1213,3 +1213,64 @@ document.addEventListener('DOMContentLoaded', async function() {
     // I-load ang initial dashboard data
     await loadDashboardStats();
 });
+
+/* ============================================================
+   REAL-TIME WEBSOCKET UPDATES
+   ============================================================ */
+
+window.addEventListener('emr:websocket', async function(event) {
+    const data = event.detail;
+
+    console.log('📡 Dashboard WebSocket event:', data);
+
+    if (!data) return;
+
+    // Patient changes
+    if (
+        data.entity === 'patient' &&
+        (
+            data.action === 'created' ||
+            data.action === 'updated' ||
+            data.action === 'deleted'
+        )
+    ) {
+        console.log('👤 Patient changed — refreshing dashboard stats...');
+        await loadDashboardStats();
+    }
+
+    // Medical record changes
+    if (data.entity === 'medical_record') {
+        console.log('📋 Medical record changed — refreshing dashboard...');
+        await loadDashboardStats();
+    }
+
+    // Immunization changes
+    if (data.entity === 'immunization') {
+        console.log('💉 Immunization changed — refreshing dashboard...');
+        await loadDashboardStats();
+    }
+
+    // Disease / health problem changes
+    if (
+        data.entity === 'health_problem' ||
+        data.entity === 'disease_case'
+    ) {
+        console.log('🦠 Health data changed — refreshing dashboard...');
+        await loadDashboardStats();
+    }
+
+    // Pregnancy changes
+    if (data.entity === 'pregnancy') {
+        console.log('🤰 Pregnancy data changed — refreshing dashboard...');
+        await loadDashboardStats();
+    }
+
+    // Prescription / inventory changes
+    if (
+        data.entity === 'prescription' ||
+        data.entity === 'inventory'
+    ) {
+        console.log('💊 Inventory/prescription changed — refreshing dashboard...');
+        await loadDashboardStats();
+    }
+});

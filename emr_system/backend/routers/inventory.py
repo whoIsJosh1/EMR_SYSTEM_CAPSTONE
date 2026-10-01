@@ -1,7 +1,7 @@
 import csv
 import io
 from datetime import datetime
-
+from websocket_manager import manager
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -253,7 +253,7 @@ async def import_inventory_csv(
 # ============================================================
 
 @router.post("/receive-stock/{item_id}")
-def receive_stock(
+async def receive_stock(
     item_id: int,
     quantity: int,
     remarks: str = "",
@@ -295,6 +295,15 @@ def receive_stock(
     db.add(transaction)
     db.commit()
     db.refresh(item)
+
+    await manager.broadcast_event(
+        "inventory_stock_updated",
+        "inventory",
+        "stock_updated",
+        item_id=item.item_id,
+        item_name=item.item_name,
+        current_stock=item.current_stock
+    )
 
     return {
         "message": "Stock received successfully.",

@@ -1,9 +1,15 @@
 # ============================================================
 # websocket.py
-# WebSocket endpoint for real-time EMR communication
+# Central WebSocket endpoint
 # ============================================================
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+import json
+
+from fastapi import (
+    APIRouter,
+    WebSocket,
+    WebSocketDisconnect
+)
 
 from websocket_manager import manager
 
@@ -21,30 +27,46 @@ async def websocket_endpoint(websocket: WebSocket):
     print("🟢 WebSocket connection accepted")
 
     try:
+
         while True:
 
-            print("⏳ Waiting for WebSocket message...")
+            raw_data = await websocket.receive_text()
 
-            data = await websocket.receive_text()
-
-            print(f"📨 WebSocket message received: {data}")
-
-            await manager.send_personal_message(
-                {
-                    "type": "pong",
-                    "message": "WebSocket connection is working!"
-                },
-                websocket
+            print(
+                f"📨 WebSocket message received: "
+                f"{raw_data}"
             )
 
-            print("📤 Pong sent to browser")
+            try:
+                data = json.loads(raw_data)
+            except Exception:
+                data = {}
+
+            # ------------------------------------------------
+            # HEARTBEAT
+            # ------------------------------------------------
+
+            if data.get("type") == "ping":
+
+                await manager.send_personal_message(
+                    {
+                        "type": "pong",
+                        "message":
+                            "WebSocket connection is working!"
+                    },
+                    websocket
+                )
+
+                print("📤 Pong sent to browser")
 
     except WebSocketDisconnect:
 
         print("🔴 WebSocket client disconnected")
+
         manager.disconnect(websocket)
 
     except Exception as e:
 
         print(f"❌ WebSocket error: {e}")
+
         manager.disconnect(websocket)

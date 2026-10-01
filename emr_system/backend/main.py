@@ -17,7 +17,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from dotenv import load_dotenv
-
+from websocket_manager import manager
 load_dotenv()
 
 from database import engine, get_db, test_connection, get_barangay_name, Base
@@ -37,6 +37,7 @@ from routers.analytics import router as analytics_router
 from routers.reports   import router as reports_router
 from routers.inventory import router as inventory_router
 from routers.prescriptions import router as prescriptions_router
+from routers.websocket import router as websocket_router
 # ── Rate limiter ──────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
 
@@ -85,6 +86,14 @@ async def create_medical_record(
     db.commit()
     db.refresh(rec)
 
+    await manager.broadcast_event(
+        "medical_record_created",
+        "medical_record",
+        "created",
+        record_id=rec.record_id,
+        patient_id=rec.patient_id,
+        user_id=current_user.user_id
+    )
     # Auto-count disease cases from diagnosis field
     diagnosis = body.get("diagnosis", "") or ""
     if diagnosis:
@@ -185,7 +194,18 @@ async def update_medical_record(
     db.commit()
     db.refresh(record)
 
-    # Auto-count disease cases when diagnosis is added
+    
+    await manager.broadcast_event(
+        "medical_record_updated",
+        "medical_record",
+        "updated",
+        record_id=record.record_id,
+        patient_id=record.patient_id,
+        user_id=current_user.user_id,
+        diagnosis=record.diagnosis
+    )
+
+    # If diagnosis was added/changed, update disease case counting
     diagnosis = body.get("diagnosis", "") or ""
 
     if diagnosis:
@@ -239,6 +259,15 @@ async def create_immunization(
     db.add(immun)
     db.commit()
     db.refresh(immun)
+
+    await manager.broadcast_event(
+    "immunization_created",
+    "immunization",
+    "created",
+    immunization_id=immun.immunization_id,
+    patient_id=immun.patient_id,
+    user_id=current_user.user_id
+)
     return {"message": "Immunization saved.", "immunization_id": immun.immunization_id}
 
 
@@ -317,8 +346,18 @@ async def upsert_health_problems(
             chronic_diseases = body.get("chronic_diseases"),
             other_concerns   = body.get("other_concerns")
         )
-        db.add(hp)
+    db.add(hp)
+
     db.commit()
+
+    await manager.broadcast_event(
+        "health_problem_updated",
+        "health_problem",
+        "updated",
+        patient_id=patient_id,
+        user_id=current_user.user_id
+    )
+
     return {"message": "Health problems saved."}
 
 
@@ -598,6 +637,7 @@ app.include_router(audit_router)
 app.include_router(inventory_router)
 app.include_router(mr_router)
 app.include_router(prescriptions_router)
+app.include_router(websocket_router)
 # Static files
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend"))

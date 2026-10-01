@@ -136,10 +136,14 @@ async def create_patient(
     print("📢 Broadcasting patient_created event...")
     print(f"🔌 Connected clients: {len(manager.active_connections)}")
 
-    await manager.broadcast({
-        "type": "patient_created",
-        "patient": patient_data
-    })
+    await manager.broadcast_event(
+        "patient_created",
+        "patient",
+        "created",
+        patient=patient_data,
+        patient_id=p.patient_id,
+        user_id=current_user.user_id
+    )
 
     print("✅ patient_created event broadcasted")
 
@@ -206,10 +210,14 @@ async def update_patient(
     patient_data = _fmt(p)
 
     # Notify all connected users
-    await manager.broadcast({
-        "type": "patient_updated",
-        "patient": patient_data
-    })
+    await manager.broadcast_event(
+    "patient_updated",
+    "patient",
+    "updated",
+    patient=patient_data,
+    patient_id=p.patient_id,
+    user_id=current_user.user_id
+)
 
     return patient_data
 
@@ -228,10 +236,13 @@ async def archive_patient(
     db.commit()
 
     # Notify all connected users
-    await manager.broadcast({
-        "type": "patient_deleted",
-        "patient_id": patient_id
-    })
+    await manager.broadcast_event(
+    "patient_deleted",
+    "patient",
+    "deleted",
+    patient_id=patient_id,
+    user_id=current_user.user_id
+)
 
     return {
         "message": f"Patient {p.last_name}, {p.first_name} archived."

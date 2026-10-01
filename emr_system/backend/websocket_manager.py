@@ -1,6 +1,6 @@
 # ============================================================
 # websocket_manager.py
-# Manages active WebSocket connections for the EMR system
+# Central real-time event manager for the EMR system
 # ============================================================
 
 from fastapi import WebSocket
@@ -9,14 +9,15 @@ import json
 
 
 class ConnectionManager:
+
     def __init__(self):
-        # Store all currently connected WebSocket clients
         self.active_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
-        """Accept and store a new WebSocket connection."""
         await websocket.accept()
-        self.active_connections.append(websocket)
+
+        if websocket not in self.active_connections:
+            self.active_connections.append(websocket)
 
         print(
             f"🔌 WebSocket connected. "
@@ -24,7 +25,7 @@ class ConnectionManager:
         )
 
     def disconnect(self, websocket: WebSocket):
-        """Remove a disconnected WebSocket client."""
+
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
 
@@ -33,25 +34,64 @@ class ConnectionManager:
             f"Active connections: {len(self.active_connections)}"
         )
 
-    async def send_personal_message(self, message: dict, websocket: WebSocket):
-        """Send a message to one specific client."""
+    async def send_personal_message(
+        self,
+        message: dict,
+        websocket: WebSocket
+    ):
         await websocket.send_text(json.dumps(message))
 
     async def broadcast(self, message: dict):
-        """Send a message to every connected client."""
+
         disconnected = []
 
-        for connection in self.active_connections:
+        for connection in list(self.active_connections):
+
             try:
-                await connection.send_text(json.dumps(message))
+                await connection.send_text(
+                    json.dumps(message)
+                )
+
             except Exception:
-                # Remember connections that are no longer available
                 disconnected.append(connection)
 
-        # Remove dead connections
         for connection in disconnected:
             self.disconnect(connection)
+            
+
+    async def broadcast_event(
+        self,
+        event_type: str,
+        entity: str,
+        action: str,
+        **data
+    ):
+        """
+        Central event format.
+
+        Example:
+        {
+            "type": "medical_record_updated",
+            "entity": "medical_record",
+            "action": "updated",
+            "record_id": 10,
+            "patient_id": 5
+        }
+        """
+
+        message = {
+            "type": event_type,
+            "entity": entity,
+            "action": action,
+            **data
+        }
+
+        print(
+            f"📡 Broadcasting: {event_type} "
+            f"entity={entity} action={action}"
+        )
+
+        await self.broadcast(message)
 
 
-# One shared manager for the entire FastAPI application
 manager = ConnectionManager()
