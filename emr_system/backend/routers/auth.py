@@ -304,5 +304,23 @@ def _get_ui_config(role: str) -> dict:
             "can_archive_patient": False,
             "can_manage_users":    False,
         },
+        "nurse": {
+                "tabs": {
+                    "medical_records":  {"visible": True,  "editable": False},
+                    "immunizations":    {"visible": True,  "editable": False},
+                    "health_problems":  {"visible": True,  "editable": False},
+                    "pregnancy":        {"visible": True,  "editable": False},
+                },
+                "sidebar": [
+                    "patients",
+                    "surveillance",
+                    "analytics",
+                    "inventory",
+                    "reports"
+                ],
+                "can_add_patient":     False,
+                "can_archive_patient": False,
+                "can_manage_users":    False,
+            },
     }
     return configs.get(role, configs["bhw"])

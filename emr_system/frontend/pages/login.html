@@ -203,6 +203,8 @@ document.getElementById('loginForm').addEventListener('submit', async function (
             sessionStorage.setItem('user_email',     email);
             sessionStorage.setItem('barangay_name',  data.barangay_name || '');
             sessionStorage.setItem('token_expires',  String(Date.now() + data.expires_in * 1000));
+            console.log("LOGIN RESPONSE:", data);
+            console.log("ROLE FROM LOGIN:", data.role);
             // Store first login flag — dashboard will check this and show forced pw change
             sessionStorage.setItem('is_first_login', String(data.is_first_login || false));
             window.location.href = '/frontend/pages/dashboard.html';

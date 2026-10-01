@@ -36,6 +36,7 @@ from routers.patients  import router as patients_router
 from routers.analytics import router as analytics_router
 from routers.reports   import router as reports_router
 from routers.inventory import router as inventory_router
+from routers.prescriptions import router as prescriptions_router
 # ── Rate limiter ──────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
 
@@ -112,20 +113,101 @@ async def get_patient_records(
             "diagnosis":        r.diagnosis,
             "treatment":        r.treatment,
             "blood_pressure":   r.blood_pressure,
-            "temperature":      float(r.temperature)     if r.temperature     else None,
-            "weight_kg":        float(r.weight_kg)       if r.weight_kg       else None,
-            "height_cm":        float(r.height_cm)       if r.height_cm       else None,
+            "temperature":      float(r.temperature) if r.temperature else None,
+            "weight_kg":        float(r.weight_kg) if r.weight_kg else None,
+            "height_cm":        float(r.height_cm) if r.height_cm else None,
             "heart_rate":       r.heart_rate,
             "respiratory_rate": r.respiratory_rate,
-            "lmp":              str(r.lmp)               if r.lmp             else None,
+            "lmp":              str(r.lmp) if r.lmp else None,
             "notes":            r.notes,
-            "encoder":          r.encoder.name           if r.encoder         else "—",
+            "encoder":          r.encoder.name if r.encoder else "—",
             "created_at":       str(r.created_at)
         }
         for r in records
     ]
 
 
+# ============================================================
+# Update Medical Record / Doctor Diagnosis
+# ============================================================
+
+@mr_router.put("/{record_id}")
+async def update_medical_record(
+    record_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_permission('medical_records', 'edit')
+    )
+):
+    """Update an existing medical record, especially doctor diagnosis."""
+
+    record = db.query(MedicalRecord).filter(
+        MedicalRecord.record_id == record_id
+    ).first()
+
+    if not record:
+        raise HTTPException(
+            status_code=404,
+            detail="Medical record not found."
+        )
+
+    body = await request.json()
+
+    fields = [
+        "visit_date",
+        "chief_complaint",
+        "symptoms",
+        "diagnosis",
+        "treatment",
+        "blood_pressure",
+        "temperature",
+        "weight_kg",
+        "height_cm",
+        "heart_rate",
+        "respiratory_rate",
+        "notes"
+    ]
+
+    for field in fields:
+        if field in body:
+            setattr(record, field, body[field])
+
+    # LMP is only applicable to female patients
+    if "lmp" in body:
+        patient = db.query(Patient).filter(
+            Patient.patient_id == record.patient_id
+        ).first()
+
+        if patient and patient.sex == "Female":
+            record.lmp = body["lmp"] or None
+
+    db.commit()
+    db.refresh(record)
+
+    # Auto-count disease cases when diagnosis is added
+    diagnosis = body.get("diagnosis", "") or ""
+
+    if diagnosis:
+        _auto_count_cases(
+            db,
+            diagnosis,
+            record.patient_id,
+            record.visit_date,
+            current_user.user_id
+        )
+
+    return {
+        "message": "Medical record updated successfully.",
+        "record_id": record.record_id
+    }
+
+
+# Immunization Router
+immun_router = APIRouter(
+    prefix="/api/immunizations",
+    tags=["Immunizations"]
+)
 # Immunization Router
 immun_router = APIRouter(prefix="/api/immunizations", tags=["Immunizations"])
 
@@ -514,6 +596,8 @@ app.include_router(preg_router)
 app.include_router(disease_router)
 app.include_router(audit_router)
 app.include_router(inventory_router)
+app.include_router(mr_router)
+app.include_router(prescriptions_router)
 # Static files
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend"))

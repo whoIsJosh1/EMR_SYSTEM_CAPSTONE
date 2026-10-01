@@ -5,6 +5,12 @@
 --   2. Change DB name to emr_dalandanan
 -- Each barangay has its own standalone database.
 -- ============================================================
+--
+-- NOTE:
+-- This version creates BOTH databases in one script.
+-- Therefore, if you run this exact combined script, run it ONCE.
+-- ============================================================
+
 
 -- ============================================================
 -- DATABASE 1: BARANGAY VEINTE REALES
@@ -21,9 +27,10 @@ CREATE TABLE IF NOT EXISTS users (
     name            VARCHAR(150) NOT NULL,
     email           VARCHAR(150) NOT NULL UNIQUE,
     password_hash   VARCHAR(255) NOT NULL,
-    role            ENUM('admin','bhw') NOT NULL DEFAULT 'bhw',
+    role ENUM('admin','bhw','midwife','doctor','nurse') NOT NULL DEFAULT 'bhw',
     position        VARCHAR(100) NULL,
     status          ENUM('active','inactive','locked') NOT NULL DEFAULT 'active',
+    is_first_login  TINYINT(1) NOT NULL DEFAULT 1,
     failed_attempts INT NOT NULL DEFAULT 0,
     locked_until    DATETIME NULL,
     last_login      DATETIME NULL,
@@ -185,45 +192,21 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- ============================================================
 
 -- INVENTORY ITEMS TABLE
--- Stores medicines, vaccines, and medical supplies
 CREATE TABLE IF NOT EXISTS inventory_items (
     item_id          INT AUTO_INCREMENT PRIMARY KEY,
+    item_code        VARCHAR(50) NOT NULL UNIQUE,
     item_name        VARCHAR(150) NOT NULL,
     category         ENUM('Medicine', 'Vaccine', 'Medical Supply') NOT NULL,
     description      TEXT NULL,
     unit             VARCHAR(50) NOT NULL,
+    current_stock    INT NOT NULL DEFAULT 0,
     reorder_level    INT NOT NULL DEFAULT 10,
+    batch_number     VARCHAR(100) NULL,
+    expiration_date  DATE NULL,
     is_active        TINYINT(1) NOT NULL DEFAULT 1,
     created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
-
--- CURRENT STOCK TABLE
-CREATE TABLE IF NOT EXISTS inventory_stock (
-    stock_id         INT AUTO_INCREMENT PRIMARY KEY,
-    item_id          INT NOT NULL,
-    quantity         INT NOT NULL DEFAULT 0,
-    updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (item_id) REFERENCES inventory_items(item_id)
-        ON DELETE CASCADE,
-    UNIQUE KEY uq_inventory_stock_item (item_id)
-) ENGINE=InnoDB;
-
--- INVENTORY TRANSACTIONS TABLE
--- Keeps the history of stock-in, stock-out, and adjustments
-CREATE TABLE IF NOT EXISTS inventory_transactions (
-    transaction_id   INT AUTO_INCREMENT PRIMARY KEY,
-    item_id          INT NOT NULL,
-    transaction_type ENUM('Stock In', 'Stock Out', 'Adjustment') NOT NULL,
-    quantity         INT NOT NULL,
-    previous_stock   INT NOT NULL,
-    new_stock        INT NOT NULL,
-    remarks          TEXT NULL,
-    user_id          INT NOT NULL,
-    created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (item_id) REFERENCES inventory_items(item_id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users(user_id)
+    updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+                     ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
 CREATE INDEX idx_inventory_item_name
@@ -232,16 +215,90 @@ CREATE INDEX idx_inventory_item_name
 CREATE INDEX idx_inventory_category
     ON inventory_items (category);
 
+
+-- ============================================================
+-- MEDICAL RECORD PRESCRIPTIONS
+-- Doctor prescriptions for medicines / vaccines / supplies
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS medical_record_prescriptions (
+    prescription_id INT AUTO_INCREMENT PRIMARY KEY,
+
+    record_id INT NOT NULL,
+    item_id INT NOT NULL,
+
+    quantity INT NOT NULL,
+    instructions TEXT NULL,
+
+    status ENUM('pending', 'dispensed', 'cancelled')
+        NOT NULL DEFAULT 'pending',
+
+    dispensed_quantity INT NOT NULL DEFAULT 0,
+    dispensed_by INT NULL,
+    dispensed_at DATETIME NULL,
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_mrp_record_id (record_id),
+    INDEX idx_mrp_item_id (item_id),
+    INDEX idx_mrp_dispensed_by (dispensed_by),
+
+    CONSTRAINT fk_mrp_record
+        FOREIGN KEY (record_id)
+        REFERENCES medical_records(record_id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT fk_mrp_item
+        FOREIGN KEY (item_id)
+        REFERENCES inventory_items(item_id),
+
+    CONSTRAINT fk_mrp_dispensed_by
+        FOREIGN KEY (dispensed_by)
+        REFERENCES users(user_id)
+);
+
+
+-- INVENTORY TRANSACTIONS TABLE
+CREATE TABLE IF NOT EXISTS inventory_transactions (
+    transaction_id   INT AUTO_INCREMENT PRIMARY KEY,
+    item_id          INT NOT NULL,
+
+    transaction_type ENUM(
+        'import',
+        'stock_in',
+        'dispense',
+        'adjustment'
+    ) NOT NULL,
+
+    quantity         INT NOT NULL,
+    stock_before     INT NOT NULL,
+    stock_after      INT NOT NULL,
+
+    remarks          TEXT NULL,
+    user_id          INT NULL,
+
+    created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (item_id)
+        REFERENCES inventory_items(item_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (user_id)
+        REFERENCES users(user_id)
+) ENGINE=InnoDB;
+
 CREATE INDEX idx_inventory_transaction_item
     ON inventory_transactions (item_id);
 
 CREATE INDEX idx_inventory_transaction_date
     ON inventory_transactions (created_at);
+
+
 -- ============================================================
 -- SEED DATA FOR VEINTE REALES
 -- ============================================================
-
-
 
 INSERT INTO disease (disease_name, icd_code, category, is_notifiable) VALUES
 ('Influenza',                   'J11',   'Communicable',     0),
@@ -280,9 +337,10 @@ CREATE TABLE IF NOT EXISTS users (
     name            VARCHAR(150) NOT NULL,
     email           VARCHAR(150) NOT NULL UNIQUE,
     password_hash   VARCHAR(255) NOT NULL,
-    role            ENUM('admin','bhw') NOT NULL DEFAULT 'bhw',
+    role ENUM('admin','bhw','midwife','doctor','nurse') NOT NULL DEFAULT 'bhw',
     position        VARCHAR(100) NULL,
     status          ENUM('active','inactive','locked') NOT NULL DEFAULT 'active',
+    is_first_login  TINYINT(1) NOT NULL DEFAULT 1,
     failed_attempts INT NOT NULL DEFAULT 0,
     locked_until    DATETIME NULL,
     last_login      DATETIME NULL,
@@ -370,6 +428,7 @@ CREATE TABLE IF NOT EXISTS medical_records (
     FOREIGN KEY (user_id)    REFERENCES users(user_id)
 ) ENGINE=InnoDB;
 
+
 CREATE TABLE IF NOT EXISTS immunization (
     immunization_id     INT AUTO_INCREMENT PRIMARY KEY,
     patient_id          INT NOT NULL,
@@ -418,6 +477,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
     date_time   DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
+
+
 -- ============================================================
 -- INVENTORY MODULE
 -- ============================================================
@@ -425,41 +486,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- INVENTORY ITEMS TABLE
 CREATE TABLE IF NOT EXISTS inventory_items (
     item_id          INT AUTO_INCREMENT PRIMARY KEY,
+    item_code        VARCHAR(50) NOT NULL UNIQUE,
     item_name        VARCHAR(150) NOT NULL,
     category         ENUM('Medicine', 'Vaccine', 'Medical Supply') NOT NULL,
     description      TEXT NULL,
-    unit              VARCHAR(50) NOT NULL,
+    unit             VARCHAR(50) NOT NULL,
+    current_stock    INT NOT NULL DEFAULT 0,
     reorder_level    INT NOT NULL DEFAULT 10,
-    is_active         TINYINT(1) NOT NULL DEFAULT 1,
-    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
-
--- CURRENT STOCK TABLE
-CREATE TABLE IF NOT EXISTS inventory_stock (
-    stock_id         INT AUTO_INCREMENT PRIMARY KEY,
-    item_id          INT NOT NULL,
-    quantity         INT NOT NULL DEFAULT 0,
-    updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (item_id) REFERENCES inventory_items(item_id)
-        ON DELETE CASCADE,
-    UNIQUE KEY uq_inventory_stock_item (item_id)
-) ENGINE=InnoDB;
-
--- INVENTORY TRANSACTIONS TABLE
-CREATE TABLE IF NOT EXISTS inventory_transactions (
-    transaction_id   INT AUTO_INCREMENT PRIMARY KEY,
-    item_id          INT NOT NULL,
-    transaction_type ENUM('Stock In', 'Stock Out', 'Adjustment') NOT NULL,
-    quantity         INT NOT NULL,
-    previous_stock   INT NOT NULL,
-    new_stock        INT NOT NULL,
-    remarks          TEXT NULL,
-    user_id          INT NOT NULL,
+    batch_number     VARCHAR(100) NULL,
+    expiration_date  DATE NULL,
+    is_active        TINYINT(1) NOT NULL DEFAULT 1,
     created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (item_id) REFERENCES inventory_items(item_id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users(user_id)
+    updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+                     ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
 CREATE INDEX idx_inventory_item_name
@@ -468,13 +507,87 @@ CREATE INDEX idx_inventory_item_name
 CREATE INDEX idx_inventory_category
     ON inventory_items (category);
 
+
+-- ============================================================
+-- MEDICAL RECORD PRESCRIPTIONS
+-- Doctor prescriptions for medicines / vaccines / supplies
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS medical_record_prescriptions (
+    prescription_id INT AUTO_INCREMENT PRIMARY KEY,
+
+    record_id INT NOT NULL,
+    item_id INT NOT NULL,
+
+    quantity INT NOT NULL,
+    instructions TEXT NULL,
+
+    status ENUM('pending', 'dispensed', 'cancelled')
+        NOT NULL DEFAULT 'pending',
+
+    dispensed_quantity INT NOT NULL DEFAULT 0,
+    dispensed_by INT NULL,
+    dispensed_at DATETIME NULL,
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_mrp_record_id (record_id),
+    INDEX idx_mrp_item_id (item_id),
+    INDEX idx_mrp_dispensed_by (dispensed_by),
+
+    CONSTRAINT fk_mrp_record
+        FOREIGN KEY (record_id)
+        REFERENCES medical_records(record_id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT fk_mrp_item
+        FOREIGN KEY (item_id)
+        REFERENCES inventory_items(item_id),
+
+    CONSTRAINT fk_mrp_dispensed_by
+        FOREIGN KEY (dispensed_by)
+        REFERENCES users(user_id)
+);
+
+
+-- INVENTORY TRANSACTIONS TABLE
+CREATE TABLE IF NOT EXISTS inventory_transactions (
+    transaction_id   INT AUTO_INCREMENT PRIMARY KEY,
+    item_id          INT NOT NULL,
+
+    transaction_type ENUM(
+        'import',
+        'stock_in',
+        'dispense',
+        'adjustment'
+    ) NOT NULL,
+
+    quantity         INT NOT NULL,
+    stock_before     INT NOT NULL,
+    stock_after      INT NOT NULL,
+
+    remarks          TEXT NULL,
+    user_id          INT NULL,
+
+    created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (item_id)
+        REFERENCES inventory_items(item_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (user_id)
+        REFERENCES users(user_id)
+) ENGINE=InnoDB;
+
 CREATE INDEX idx_inventory_transaction_item
     ON inventory_transactions (item_id);
 
 CREATE INDEX idx_inventory_transaction_date
     ON inventory_transactions (created_at);
 
-    
+
 INSERT INTO disease (disease_name, icd_code, category, is_notifiable) VALUES
 ('Influenza',                   'J11',   'Communicable',     0),
 ('Dengue Fever',                'A90',   'Communicable',     1),
@@ -498,31 +611,42 @@ VALUES ('System Administrator', 'admin@dalandanan.gov.ph',
 
 SELECT 'Both databases created successfully!' AS status;
 
+
 -- ============================================================
 -- MIGRATION: Add is_first_login column to users table
 -- Run this in MySQL before restarting the server
 -- ============================================================
- 
+
+-- NOTE:
+-- is_first_login is now included directly in the users table
+-- above, so the ALTER TABLE statements from the old migration
+-- are no longer needed.
+
 USE emr_veinte_reales;
 ALTER TABLE users ADD COLUMN is_first_login TINYINT(1) NOT NULL DEFAULT 1 AFTER status;
--- Mark existing admin as not first-time (already set up)
 UPDATE users SET is_first_login = 0 WHERE role = 'admin';
- 
+
 USE emr_dalandanan;
 ALTER TABLE users ADD COLUMN is_first_login TINYINT(1) NOT NULL DEFAULT 1 AFTER status;
 UPDATE users SET is_first_login = 0 WHERE role = 'admin';
- 
+
 SELECT 'Migration complete!' AS status;
+
 
 -- ============================================================
 -- MIGRATION: Update role ENUM to include midwife and doctor
 -- Run this BEFORE restarting the server
 -- ============================================================
- 
+
+-- NOTE:
+-- The role ENUM already includes admin, bhw, midwife, doctor,
+-- and nurse in both users tables above.
+-- Therefore, the old ALTER TABLE migration is no longer needed.
+
 USE emr_veinte_reales;
-ALTER TABLE users MODIFY COLUMN role ENUM('admin','bhw','midwife','doctor') NOT NULL DEFAULT 'bhw';
- 
+ALTER TABLE users MODIFY COLUMN role ENUM('admin','bhw','midwife','doctor','nurse') NOT NULL DEFAULT 'bhw';
+
 USE emr_dalandanan;
-ALTER TABLE users MODIFY COLUMN role ENUM('admin','bhw','midwife','doctor') NOT NULL DEFAULT 'bhw';
- 
+ALTER TABLE users MODIFY COLUMN role ENUM('admin','bhw','midwife','doctor','nurse') NOT NULL DEFAULT 'bhw';
+
 SELECT 'Role enum migration complete!' AS status;

@@ -226,7 +226,14 @@ PERMISSIONS = {
         "pregnancy":       "view",
         "health_problems": "view",
         "users":           "none",
-    },
+        },  
+    "nurse": {
+        "medical_records": "view",
+        "immunization":    "view",
+        "pregnancy":       "view",
+        "health_problems": "view",
+        "users":           "none",
+},
 }
 
 

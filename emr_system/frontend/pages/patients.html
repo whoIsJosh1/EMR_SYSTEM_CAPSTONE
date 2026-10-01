@@ -177,7 +177,7 @@
     <!-- Tab: Medical History -->
     <div class="tab-pane active" id="tab-records">
         <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-            <button id="addRecordBtn" class="btn btn-primary btn-sm" onclick="openModal('addRecordModal')">+ Add Medical Record</button>
+            <button id="addRecordBtn" class="btn btn-primary btn-sm" onclick="openAddRecordModal()">+ Add Medical Record</button>
         </div>
         <div class="timeline" id="recordsTimeline">
             <div class="empty-state"><p>No medical records yet.</p></div>
@@ -289,7 +289,7 @@
 <div class="modal-overlay" id="addRecordModal">
 <div class="modal modal-lg">
     <div class="modal-header">
-        <span class="modal-title">Add Medical Record</span>
+        <span class="modal-title" id="recordModalTitle">Add Medical Record</span>
         <button class="modal-close" onclick="closeModal('addRecordModal')">&#x2715;</button>
     </div>
 
@@ -337,6 +337,63 @@
             <div class="form-group"><label>Symptoms</label><textarea id="recSymptoms" placeholder="Describe symptoms..."></textarea></div>
             <div class="form-group"><label>Diagnosis</label><textarea id="recDiagnosis" placeholder="Clinical diagnosis..."></textarea></div>
             <div class="form-group"><label>Treatment</label><textarea id="recTreatment" placeholder="Prescribed medicines or treatment..."></textarea></div>
+                        <!-- DOCTOR PRESCRIPTIONS -->
+            <div class="form-group" id="doctorPrescriptionSection">
+
+                <label>Prescribed Medicines / Supplies</label>
+
+                <div id="prescriptionItems">
+
+                    <div class="prescription-row"
+                        style="
+                            display:grid;
+                            grid-template-columns:2fr 100px 2fr auto;
+                            gap:8px;
+                            margin-bottom:8px;
+                            align-items:center;
+                        ">
+
+                        <select class="prescription-item">
+                            <option value="">
+                                Select medicine / supply
+                            </option>
+                        </select>
+
+                        <input
+                            type="number"
+                            class="prescription-qty"
+                            min="1"
+                            value="1"
+                            placeholder="Qty"
+                        >
+
+                        <input
+                            type="text"
+                            class="prescription-instructions"
+                            placeholder="Instructions"
+                        >
+
+                        <button
+                            type="button"
+                            class="btn btn-danger btn-sm"
+                            onclick="removePrescriptionRow(this)"
+                            style="display:none;">
+                            Remove
+                        </button>
+
+                    </div>
+
+                </div>
+
+                <button
+                    type="button"
+                    class="btn btn-outline btn-sm"
+                    onclick="addPrescriptionRow()"
+                    style="margin-top:4px;">
+                    + Add Medicine / Supply
+                </button>
+
+            </div>
             <div class="form-group"><label>Notes</label><textarea id="recNotes" placeholder="Additional notes..."></textarea></div>
         </div>
     </div>
@@ -657,7 +714,7 @@ apiGet('/api/barangay-info').then(d => { if (d) document.getElementById('baranga
 let currentPatientId  = null;
 let currentPatientSex = '';
 let searchTimer       = null;
-
+let editingRecordId   = null;
 /* ── SEARCH ── */
 async function runSearch() {
     const q   = document.getElementById('searchInput').value.trim();
@@ -837,82 +894,1213 @@ function switchTab(name) {
 /* ── MEDICAL HISTORY ── */
 async function loadMedicalHistory(pid) {
     try {
-        const records = await apiGet(`/api/medical-records/patient/${pid}`);
-        const el      = document.getElementById('recordsTimeline');
-        if (!records||!records.length) {
-            el.innerHTML = `<div class="empty-state"><h3>No medical records yet</h3><p>Click "+ Add Medical Record" to add the first record.</p></div>`;
+        const records = await apiGet(
+            `/api/medical-records/patient/${pid}`
+        );
+
+        const el = document.getElementById('recordsTimeline');
+
+        if (!records || !records.length) {
+            el.innerHTML = `
+                <div class="empty-state">
+                    <h3>No medical records yet</h3>
+                    <p>Click "+ Add Medical Record" to add the first record.</p>
+                </div>
+            `;
             return;
         }
-        el.innerHTML = records.map(r => `
-            <div class="tl-item">
-                <div class="tl-header">
-                    <div>
-                        <div style="font-weight:700;font-size:14px">${escapeHtml(r.chief_complaint||r.diagnosis||'Visit')}</div>
-                        <div class="tl-date">${fmtDate(r.visit_date)}</div>
+
+        const role =
+            sessionStorage.getItem('user_role') || 'bhw';
+
+        const isDoctor = role === 'doctor';
+        const isNurse = role === 'nurse';
+
+        /*
+         * Load prescriptions for every medical record
+         */
+        const prescriptionMap = {};
+
+        await Promise.all(
+            records.map(async (record) => {
+                try {
+                    const prescriptions = await apiGet(
+                        `/api/prescriptions/record/${record.record_id}`
+                    );
+
+                    prescriptionMap[record.record_id] =
+                        prescriptions || [];
+
+                } catch (error) {
+                    console.error(
+                        `Failed to load prescriptions for record ${record.record_id}:`,
+                        error
+                    );
+
+                    prescriptionMap[record.record_id] = [];
+                }
+            })
+        );
+
+        el.innerHTML = records.map(r => {
+
+            // Doctor can complete records that don't have a diagnosis yet
+            const completeDiagnosisButton =
+                isDoctor && !r.diagnosis
+                    ? `
+                    <button
+                        class="btn btn-primary btn-sm"
+                        onclick="event.stopPropagation(); openDoctorDiagnosis(${r.record_id})"
+                        style="margin-top:10px;">
+                        Complete Diagnosis
+                    </button>
+                    `
+                    : '';
+
+            const prescriptions =
+                prescriptionMap[r.record_id] || [];
+
+            /*
+             * Prescription section
+             */
+            const prescriptionSection =
+                prescriptions.length
+                    ? `
+                    <div style="
+                        margin-top:16px;
+                        padding-top:14px;
+                        border-top:1px solid var(--border);
+                    ">
+
+                        <div style="
+                            font-weight:700;
+                            font-size:13px;
+                            margin-bottom:10px;
+                        ">
+                            Prescribed Medicine / Supplies
+                        </div>
+
+                        ${prescriptions.map(p => {
+
+                            const remaining =
+                                Math.max(
+                                    0,
+                                    (Number(p.quantity) || 0) -
+                                    (Number(p.dispensed_quantity) || 0)
+                                );
+
+                            const isDispensed =
+                                p.status === 'dispensed';
+
+                            const canDispense =
+                                isNurse &&
+                                !isDispensed &&
+                                remaining > 0;
+
+                            return `
+                            <div style="
+                                border:1px solid var(--border);
+                                border-radius:10px;
+                                padding:12px;
+                                margin-bottom:8px;
+                                background:var(--card);
+                            ">
+
+                                <div style="
+                                    display:flex;
+                                    justify-content:space-between;
+                                    align-items:flex-start;
+                                    gap:10px;
+                                ">
+
+                                    <div style="flex:1;">
+
+                                        <div style="
+                                            font-weight:700;
+                                            font-size:13px;
+                                        ">
+                                            ${escapeHtml(
+                                                p.item_name || 'Unknown item'
+                                            )}
+                                        </div>
+
+                                        <div style="
+                                            margin-top:4px;
+                                            font-size:12px;
+                                            color:var(--muted);
+                                        ">
+                                            Code:
+                                            ${escapeHtml(
+                                                p.item_code || '—'
+                                            )}
+                                        </div>
+
+                                        <div style="
+                                            margin-top:4px;
+                                            font-size:12px;
+                                        ">
+                                            Prescribed:
+                                            <strong>
+                                                ${p.quantity}
+                                                ${escapeHtml(
+                                                    p.unit || ''
+                                                )}
+                                            </strong>
+                                        </div>
+
+                                        ${
+                                            p.instructions
+                                                ? `
+                                                <div style="
+                                                    margin-top:5px;
+                                                    font-size:12px;
+                                                ">
+                                                    Instructions:
+                                                    ${escapeHtml(
+                                                        p.instructions
+                                                    )}
+                                                </div>
+                                                `
+                                                : ''
+                                        }
+
+                                        <div style="
+                                            margin-top:5px;
+                                            font-size:12px;
+                                        ">
+                                            Dispensed:
+                                            <strong>
+                                                ${p.dispensed_quantity || 0}
+                                            </strong>
+                                            /
+                                            ${p.quantity}
+                                        </div>
+
+                                    </div>
+
+                                    <div style="
+                                        text-align:right;
+                                        min-width:90px;
+                                    ">
+
+                                        ${
+                                            isDispensed
+                                                ? `
+                                                <span style="
+                                                    display:inline-block;
+                                                    padding:5px 9px;
+                                                    border-radius:20px;
+                                                    background:#e8f5e9;
+                                                    color:#2e7d32;
+                                                    font-size:11px;
+                                                    font-weight:700;
+                                                ">
+                                                    DISPENSED
+                                                </span>
+                                                `
+                                                : `
+                                                <span style="
+                                                    display:inline-block;
+                                                    padding:5px 9px;
+                                                    border-radius:20px;
+                                                    background:#fff3cd;
+                                                    color:#856404;
+                                                    font-size:11px;
+                                                    font-weight:700;
+                                                ">
+                                                    PENDING
+                                                </span>
+                                                `
+                                        }
+
+                                    </div>
+
+                                </div>
+
+                                ${
+                                    canDispense
+                                        ? `
+                                        <div style="
+                                            margin-top:10px;
+                                            display:flex;
+                                            gap:8px;
+                                            align-items:center;
+                                        ">
+
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="${remaining}"
+                                                value="${remaining}"
+                                                id="dispense-qty-${p.prescription_id}"
+                                                class="form-control"
+                                                style="
+                                                    width:90px;
+                                                    height:34px;
+                                                "
+                                            >
+
+                                            <button
+                                                class="btn btn-primary btn-sm"
+                                                onclick="
+                                                    event.stopPropagation();
+                                                    dispensePrescription(
+                                                        ${p.prescription_id},
+                                                        ${remaining}
+                                                    );
+                                                "
+                                            >
+                                                Dispense
+                                            </button>
+
+                                        </div>
+                                        `
+                                        : ''
+                                }
+
+                            </div>
+                            `;
+                        }).join('')}
+
                     </div>
-                    <span class="tl-badge">Visit</span>
+                    `
+                    : '';
+
+            return `
+            <div class="tl-item">
+
+                <div class="tl-header">
+
+                    <div>
+
+                        <div style="
+                            font-weight:700;
+                            font-size:14px
+                        ">
+                            ${escapeHtml(
+                                r.chief_complaint ||
+                                r.diagnosis ||
+                                'Visit'
+                            )}
+                        </div>
+
+                        <div class="tl-date">
+                            ${fmtDate(r.visit_date)}
+                        </div>
+
+                    </div>
+
+                    <span class="tl-badge">
+                        Visit
+                    </span>
+
                 </div>
+
+
                 <div class="tl-grid">
-                    ${r.symptoms  ? `<div class="tl-field"><div class="lbl">Symptoms</div><div class="val">${escapeHtml(r.symptoms)}</div></div>`  : ''}
-                    ${r.diagnosis ? `<div class="tl-field"><div class="lbl">Diagnosis</div><div class="val">${escapeHtml(r.diagnosis)}</div></div>` : ''}
-                    ${r.treatment ? `<div class="tl-field" style="grid-column:span 2"><div class="lbl">Treatment</div><div class="val">${escapeHtml(r.treatment)}</div></div>` : ''}
+
+                    ${
+                        r.symptoms
+                            ? `
+                            <div class="tl-field">
+
+                                <div class="lbl">
+                                    Symptoms
+                                </div>
+
+                                <div class="val">
+                                    ${escapeHtml(r.symptoms)}
+                                </div>
+
+                            </div>
+                            `
+                            : ''
+                    }
+
+
+                    ${
+                        r.diagnosis
+                            ? `
+                            <div class="tl-field">
+
+                                <div class="lbl">
+                                    Diagnosis
+                                </div>
+
+                                <div class="val">
+                                    ${escapeHtml(r.diagnosis)}
+                                </div>
+
+                            </div>
+                            `
+                            : ''
+                    }
+
+
+                    ${
+                        r.treatment
+                            ? `
+                            <div
+                                class="tl-field"
+                                style="grid-column:span 2"
+                            >
+
+                                <div class="lbl">
+                                    Treatment
+                                </div>
+
+                                <div class="val">
+                                    ${escapeHtml(r.treatment)}
+                                </div>
+
+                            </div>
+                            `
+                            : ''
+                    }
+
                 </div>
-                ${(r.blood_pressure||r.temperature||r.weight_kg||r.heart_rate||r.respiratory_rate) ? `
-                <div class="vitals-row">
-                    ${r.blood_pressure   ? `<div class="vital"><strong>${escapeHtml(r.blood_pressure)}</strong>BP</div>` : ''}
-                    ${r.temperature      ? `<div class="vital"><strong>${r.temperature}°C</strong>Temp</div>` : ''}
-                    ${r.heart_rate       ? `<div class="vital"><strong>${r.heart_rate} bpm</strong>HR</div>` : ''}
-                    ${r.respiratory_rate ? `<div class="vital"><strong>${r.respiratory_rate}</strong>RR</div>` : ''}
-                    ${r.weight_kg        ? `<div class="vital"><strong>${r.weight_kg} kg</strong>Weight</div>` : ''}
-                    ${r.height_cm        ? `<div class="vital"><strong>${r.height_cm} cm</strong>Height</div>` : ''}
-                    ${r.lmp              ? `<div class="vital"><strong>${fmtDate(r.lmp)}</strong>LMP</div>` : ''}
-                </div>` : ''}
-                <div style="margin-top:8px;font-size:11px;color:var(--muted)">Encoded by ${escapeHtml(r.encoder||'—')}</div>
-            </div>`).join('');
-    } catch(e) {
-        document.getElementById('recordsTimeline').innerHTML = `<div class="empty-state"><p>Error loading records.</p></div>`;
+
+
+                ${
+                    (
+                        r.blood_pressure ||
+                        r.temperature ||
+                        r.weight_kg ||
+                        r.heart_rate ||
+                        r.respiratory_rate
+                    )
+                    ? `
+                    <div class="vitals-row">
+
+                        ${
+                            r.blood_pressure
+                                ? `
+                                <div class="vital">
+                                    <strong>
+                                        ${escapeHtml(r.blood_pressure)}
+                                    </strong>
+                                    BP
+                                </div>
+                                `
+                                : ''
+                        }
+
+                        ${
+                            r.temperature
+                                ? `
+                                <div class="vital">
+                                    <strong>
+                                        ${r.temperature}°C
+                                    </strong>
+                                    Temp
+                                </div>
+                                `
+                                : ''
+                        }
+
+                        ${
+                            r.heart_rate
+                                ? `
+                                <div class="vital">
+                                    <strong>
+                                        ${r.heart_rate} bpm
+                                    </strong>
+                                    HR
+                                </div>
+                                `
+                                : ''
+                        }
+
+                        ${
+                            r.respiratory_rate
+                                ? `
+                                <div class="vital">
+                                    <strong>
+                                        ${r.respiratory_rate}
+                                    </strong>
+                                    RR
+                                </div>
+                                `
+                                : ''
+                        }
+
+                        ${
+                            r.weight_kg
+                                ? `
+                                <div class="vital">
+                                    <strong>
+                                        ${r.weight_kg} kg
+                                    </strong>
+                                    Weight
+                                </div>
+                                `
+                                : ''
+                        }
+
+                        ${
+                            r.height_cm
+                                ? `
+                                <div class="vital">
+                                    <strong>
+                                        ${r.height_cm} cm
+                                    </strong>
+                                    Height
+                                </div>
+                                `
+                                : ''
+                        }
+
+                        ${
+                            r.lmp
+                                ? `
+                                <div class="vital">
+                                    <strong>
+                                        ${fmtDate(r.lmp)}
+                                    </strong>
+                                    LMP
+                                </div>
+                                `
+                                : ''
+                        }
+
+                    </div>
+                    `
+                    : ''
+                }
+
+
+                <div style="
+                    margin-top:8px;
+                    font-size:11px;
+                    color:var(--muted)
+                ">
+                    Encoded by
+                    ${escapeHtml(r.encoder || '—')}
+                </div>
+
+
+                ${prescriptionSection}
+
+
+                ${completeDiagnosisButton}
+
+            </div>
+            `;
+        }).join('');
+
+    } catch (e) {
+
+        console.error(
+            'Error loading medical history:',
+            e
+        );
+
+        document.getElementById('recordsTimeline').innerHTML = `
+            <div class="empty-state">
+                <p>Error loading records.</p>
+            </div>
+        `;
     }
 }
+async function dispensePrescription(
+    prescriptionId,
+    remainingQuantity
+) {
+    const input =
+        document.getElementById(
+            `dispense-qty-${prescriptionId}`
+        );
 
-async function submitRecord() {
-    const date     = document.getElementById('recDate').value;
-    const diagnosis= document.getElementById('recDiagnosis').value.trim();
-    if (!date) { showToast('Visit date is required.','warning'); return; }
+    const quantity = parseInt(input?.value);
+
+    if (!quantity || quantity <= 0) {
+        alert('Please enter a valid dispense quantity.');
+        return;
+    }
+
+    if (quantity > remainingQuantity) {
+        alert(
+            `You can only dispense ${remainingQuantity} remaining.`
+        );
+        return;
+    }
+
+    const confirmed = confirm(
+        `Dispense ${quantity} item(s) for this prescription?`
+    );
+
+    if (!confirmed) {
+        return;
+    }
 
     try {
-        const r = await apiPost('/api/medical-records/', {
-            patient_id:       currentPatientId,
-            visit_date:       date,
-            chief_complaint:  document.getElementById('recComplaint').value.trim() ||null,
-            symptoms:         document.getElementById('recSymptoms').value.trim()  ||null,
-            diagnosis:        diagnosis ||null,
-            treatment:        document.getElementById('recTreatment').value.trim() ||null,
-            blood_pressure:   document.getElementById('recBP').value.trim()        ||null,
-            temperature:      document.getElementById('recTemp').value     ? parseFloat(document.getElementById('recTemp').value)   : null,
-            weight_kg:        document.getElementById('recWeight').value   ? parseFloat(document.getElementById('recWeight').value) : null,
-            height_cm:        document.getElementById('recHeight').value   ? parseFloat(document.getElementById('recHeight').value) : null,
-            heart_rate:       document.getElementById('recHR').value       ? parseInt(document.getElementById('recHR').value)       : null,
-            respiratory_rate: document.getElementById('recRR').value       ? parseInt(document.getElementById('recRR').value)       : null,
-            lmp:              currentPatientSex==='Female' ? (document.getElementById('recLMP').value||null) : null,
-            notes:            document.getElementById('recNotes').value.trim() ||null
-        });
-        if (r) {
-            showToast('Medical record saved.','success');
-            closeModal('addRecordModal');
-            clearRecordForm();
+
+        const response = await fetch(
+            `${API}/api/prescriptions/${prescriptionId}/dispense`,
+            {
+                method: 'POST',
+
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization':
+                        'Bearer ' +
+                        sessionStorage.getItem('access_token')
+                },
+
+                body: JSON.stringify({
+                    quantity: quantity
+                })
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.detail ||
+                'Failed to dispense prescription.'
+            );
+        }
+
+        alert(
+            data.message ||
+            'Prescription dispensed successfully.'
+        );
+
+        /*
+         * Reload the current patient profile
+         * so stock/dispensed status is immediately updated.
+         */
+        if (currentPatientId) {
             await loadMedicalHistory(currentPatientId);
         }
-    } catch(e) { showToast('Error: '+e.message,'error'); }
-}
 
+    } catch (error) {
+
+        console.error(
+            'Dispense prescription error:',
+            error
+        );
+
+        alert(
+            error.message ||
+            'Failed to dispense prescription.'
+        );
+    }
+}
+async function openDoctorDiagnosis(recordId) {
+
+    const role = sessionStorage.getItem('user_role');
+
+    // Only doctor can complete diagnosis
+    if (role !== 'doctor') {
+        showToast('Only doctors can complete a diagnosis.', 'error');
+        return;
+    }
+
+    try {
+
+        const records = await apiGet(
+            `/api/medical-records/patient/${currentPatientId}`
+        );
+
+        if (!records || !Array.isArray(records)) {
+            showToast('Unable to load medical records.', 'error');
+            return;
+        }
+
+        const record = records.find(
+            r => Number(r.record_id) === Number(recordId)
+        );
+
+        if (!record) {
+            showToast('Medical record not found.', 'error');
+            return;
+        }
+
+        // Remember which record the doctor is editing
+        editingRecordId = Number(recordId);
+
+        // Fill Step 1 information
+        document.getElementById('recDate').value =
+            record.visit_date || '';
+
+        document.getElementById('recComplaint').value =
+            record.chief_complaint || '';
+
+        document.getElementById('recBP').value =
+            record.blood_pressure || '';
+
+        document.getElementById('recTemp').value =
+            record.temperature ?? '';
+
+        document.getElementById('recWeight').value =
+            record.weight_kg ?? '';
+
+        document.getElementById('recHeight').value =
+            record.height_cm ?? '';
+
+        document.getElementById('recHR').value =
+            record.heart_rate ?? '';
+
+        document.getElementById('recRR').value =
+            record.respiratory_rate ?? '';
+
+        document.getElementById('recLMP').value =
+            record.lmp || '';
+
+        // Fill Step 2
+        document.getElementById('recSymptoms').value =
+            record.symptoms || '';
+
+        document.getElementById('recDiagnosis').value =
+            record.diagnosis || '';
+
+        document.getElementById('recTreatment').value =
+            record.treatment || '';
+
+        document.getElementById('recNotes').value =
+            record.notes || '';
+
+        // Change modal title
+        const title =
+            document.getElementById('recordModalTitle');
+
+        if (title) {
+            title.textContent = 'Complete Medical Diagnosis';
+        }
+
+        // Open modal
+        openModal('addRecordModal');
+
+        // DIRECTLY SHOW STEP 2
+        const step1 =
+            document.getElementById('formStep1');
+
+        const step2 =
+            document.getElementById('formStep2');
+
+        step1.style.display = 'none';
+        step2.style.display = 'block';
+
+        // Update step indicators
+        document
+            .getElementById('stepIndicator1')
+            .classList.remove('active');
+
+        document
+            .getElementById('stepIndicator2')
+            .classList.add('active');
+
+        // Update buttons
+        document.getElementById('btnCancelModal')
+            .style.display = 'none';
+
+        document.getElementById('btnBackStep')
+            .style.display = 'inline-block';
+
+        document.getElementById('btnNextStep')
+            .style.display = 'none';
+
+        const saveBtn =
+            document.getElementById('btnSaveRecord');
+
+        saveBtn.style.display = 'inline-block';
+        saveBtn.textContent = 'Save Diagnosis';
+
+    } catch (error) {
+
+        console.error(
+            'openDoctorDiagnosis error:',
+            error
+        );
+
+        showToast(
+            'Error loading diagnosis: ' + error.message,
+            'error'
+        );
+    }
+    resetPrescriptionRows();
+}
+async function submitRecord() {
+
+    const date =
+        document.getElementById('recDate').value;
+
+    const role =
+        sessionStorage.getItem('user_role') || 'bhw';
+
+    if (!date) {
+        showToast(
+            'Visit date is required.',
+            'warning'
+        );
+        return;
+    }
+
+    try {
+
+        const payload = {
+            patient_id: currentPatientId,
+
+            visit_date: date,
+
+            chief_complaint:
+                document.getElementById('recComplaint')
+                    .value.trim() || null,
+
+            symptoms:
+                document.getElementById('recSymptoms')
+                    .value.trim() || null,
+
+            diagnosis:
+                document.getElementById('recDiagnosis')
+                    .value.trim() || null,
+
+            treatment:
+                document.getElementById('recTreatment')
+                    .value.trim() || null,
+
+            blood_pressure:
+                document.getElementById('recBP')
+                    .value.trim() || null,
+
+            temperature:
+                document.getElementById('recTemp').value
+                    ? parseFloat(
+                        document.getElementById('recTemp').value
+                    )
+                    : null,
+
+            weight_kg:
+                document.getElementById('recWeight').value
+                    ? parseFloat(
+                        document.getElementById('recWeight').value
+                    )
+                    : null,
+
+            height_cm:
+                document.getElementById('recHeight').value
+                    ? parseFloat(
+                        document.getElementById('recHeight').value
+                    )
+                    : null,
+
+            heart_rate:
+                document.getElementById('recHR').value
+                    ? parseInt(
+                        document.getElementById('recHR').value
+                    )
+                    : null,
+
+            respiratory_rate:
+                document.getElementById('recRR').value
+                    ? parseInt(
+                        document.getElementById('recRR').value
+                    )
+                    : null,
+
+            lmp:
+                currentPatientSex === 'Female'
+                    ? (
+                        document.getElementById('recLMP').value
+                        || null
+                    )
+                    : null,
+
+            notes:
+                document.getElementById('recNotes')
+                    .value.trim() || null
+        };
+
+        let r;
+
+        // ==========================================
+        // DOCTOR COMPLETING EXISTING RECORD
+        // ==========================================
+        if (editingRecordId) {
+
+            r = await fetch(
+                `${API}/api/medical-records/${editingRecordId}`,
+                {
+                    method: 'PUT',
+
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization':
+                            'Bearer ' +
+                            sessionStorage.getItem('access_token')
+                    },
+
+                    body: JSON.stringify(payload)
+                }
+            );
+
+            if (!r.ok) {
+                const errorData = await r.json().catch(() => ({}));
+
+                throw new Error(
+                    errorData.detail ||
+                    'Failed to update medical record.'
+                );
+            }
+
+            r = await r.json();
+
+            showToast(
+                'Diagnosis saved successfully.',
+                'success'
+            );
+
+        }
+
+        // ==========================================
+        // NORMAL NEW MEDICAL RECORD
+        // ==========================================
+        else {
+
+            r = await apiPost(
+                '/api/medical-records/',
+                payload
+            );
+
+            if (r) {
+                showToast(
+                    'Medical record saved.',
+                    'success'
+                );
+            }
+        }
+
+            if (r) {
+
+                // ========================================================
+                // GET THE MEDICAL RECORD ID
+                // ========================================================
+
+                const savedRecordId =
+                    r.record_id ||
+                    r.medical_record?.record_id ||
+                    editingRecordId;
+
+                // ========================================================
+                // SAVE DOCTOR PRESCRIPTIONS
+                // ========================================================
+
+                if (role === 'doctor' && savedRecordId) {
+
+                    await savePrescriptions(
+                        savedRecordId
+                    );
+
+                    showToast(
+                        'Diagnosis and prescriptions saved successfully.',
+                        'success'
+                    );
+                }
+
+                // ========================================================
+                // CLOSE MODAL
+                // ========================================================
+
+                closeModal('addRecordModal');
+
+                clearRecordForm();
+
+                editingRecordId = null;
+
+                // ========================================================
+                // RESET MODAL
+                // ========================================================
+
+                goToStep(1);
+
+                const title =
+                    document.getElementById(
+                        'recordModalTitle'
+                    );
+
+                if (title) {
+                    title.textContent =
+                        'Add Medical Record';
+                }
+
+                // ========================================================
+                // REFRESH MEDICAL HISTORY
+                // ========================================================
+
+                await loadMedicalHistory(
+                    currentPatientId
+                );
+    }
+
+    } catch(e) {
+
+        console.error(
+            'submitRecord error:',
+            e
+        );
+
+        showToast(
+            'Error: ' + e.message,
+            'error'
+        );
+    }
+}
+// ============================================================
+// SAVE DOCTOR PRESCRIPTIONS
+// ============================================================
+async function savePrescriptions(recordId) {
+
+    const rows = document.querySelectorAll(
+        '#prescriptionItems .prescription-row'
+    );
+
+    // Nothing to save
+    if (!rows.length) {
+        return;
+    }
+
+    for (const row of rows) {
+
+        const itemSelect =
+            row.querySelector('.prescription-item');
+
+        const qtyInput =
+            row.querySelector('.prescription-qty');
+
+        const instructionsInput =
+            row.querySelector('.prescription-instructions');
+
+        if (!itemSelect || !qtyInput) {
+            continue;
+        }
+
+        const itemId = itemSelect.value;
+
+        // Skip completely empty rows
+        if (!itemId) {
+            continue;
+        }
+
+        const quantity =
+            parseInt(qtyInput.value);
+
+        const instructions =
+            instructionsInput?.value.trim() || null;
+
+        if (!quantity || quantity <= 0) {
+            throw new Error(
+                'Prescription quantity must be greater than 0.'
+            );
+        }
+
+        const response = await fetch(
+            `${API}/api/prescriptions/`,
+            {
+                method: 'POST',
+
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization':
+                        'Bearer ' +
+                        sessionStorage.getItem(
+                            'access_token'
+                        )
+                },
+
+                body: JSON.stringify({
+                    record_id: recordId,
+                    item_id: parseInt(itemId),
+                    quantity: quantity,
+                    instructions: instructions
+                })
+            }
+        );
+
+        if (!response.ok) {
+
+            const errorData =
+                await response.json()
+                    .catch(() => ({}));
+
+            throw new Error(
+                errorData.detail ||
+                'Failed to save prescription.'
+            );
+        }
+    }
+}
 function clearRecordForm() {
     ['recComplaint','recSymptoms','recDiagnosis','recTreatment','recBP','recTemp',
      'recWeight','recHeight','recHR','recRR','recLMP','recNotes'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.value='';
     });
     document.getElementById('recDate').value = new Date().toISOString().split('T')[0];
+    resetPrescriptionRows();
+}
+    // Clear prescription rows
+async function loadPrescriptionInventory() {
+    const container = document.getElementById('prescriptionItems');
+
+    if (!container) return;
+
+    const selects = container.querySelectorAll('.prescription-item');
+
+    try {
+        const token = sessionStorage.getItem('access_token');
+
+        const response = await fetch(`${API}/api/inventory`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to load inventory');
+        }
+
+        const items = await response.json();
+
+        selects.forEach(select => {
+            const currentValue = select.value;
+
+            select.innerHTML = `
+                <option value="">Select medicine / supply</option>
+            `;
+
+            items.forEach(item => {
+                const option = document.createElement('option');
+
+                option.value = item.item_id;
+
+                option.textContent =
+                    `${item.item_name} (${item.category}) — Stock: ${item.current_stock} ${item.unit || ''}`;
+
+                select.appendChild(option);
+            });
+
+            select.value = currentValue;
+        });
+
+    } catch (error) {
+        console.error('Failed to load prescription inventory:', error);
+    }
 }
 
+
+function createPrescriptionRow() {
+    const row = document.createElement('div');
+
+    row.className = 'prescription-row';
+
+    row.style.cssText = `
+        display:grid;
+        grid-template-columns:2fr 100px 2fr auto;
+        gap:8px;
+        margin-bottom:8px;
+        align-items:center;
+    `;
+
+    row.innerHTML = `
+        <select class="form-control prescription-item">
+            <option value="">Loading inventory...</option>
+        </select>
+
+        <input
+            type="number"
+            class="form-control prescription-qty"
+            min="1"
+            value="1"
+            placeholder="Qty">
+
+        <input
+            type="text"
+            class="form-control prescription-instructions"
+            placeholder="Instructions">
+
+        <button
+            type="button"
+            class="btn btn-danger btn-sm"
+            onclick="removePrescriptionRow(this)">
+            Remove
+        </button>
+    `;
+
+    return row;
+}
+
+
+function resetPrescriptionRows() {
+    const container = document.getElementById('prescriptionItems');
+
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    addPrescriptionRow();
+}
+
+
+function addPrescriptionRow() {
+    const container = document.getElementById('prescriptionItems');
+
+    if (!container) return;
+
+    const row = createPrescriptionRow();
+
+    container.appendChild(row);
+
+    loadPrescriptionInventory();
+
+    updatePrescriptionRemoveButtons();
+}
+
+
+function removePrescriptionRow(button) {
+    const row = button.closest('.prescription-row');
+
+    if (row) {
+        row.remove();
+    }
+
+    updatePrescriptionRemoveButtons();
+}
+
+
+function updatePrescriptionRemoveButtons() {
+    const rows = document.querySelectorAll('.prescription-row');
+
+    rows.forEach((row, index) => {
+        const button = row.querySelector('button');
+
+        if (button) {
+            button.style.display =
+                rows.length === 1 ? 'none' : 'inline-block';
+        }
+    });
+}    
+function openAddRecordModal() {
+
+    // This is a NEW medical record
+    editingRecordId = null;
+
+    // Reset the modal title
+    const title = document.getElementById('recordModalTitle');
+
+    if (title) {
+        title.textContent = 'Add Medical Record';
+    }
+
+    // Clear old data
+    clearRecordForm();
+
+    // Start at Step 1
+    goToStep(1);
+
+    // Open the modal
+    openModal('addRecordModal');
+}
 /* ── IMMUNIZATIONS ── */
 async function loadImmunizations(pid) {
     try {
@@ -1222,6 +2410,7 @@ const ROLE_CONFIG = {
     bhw:     { medical_records:'edit', immunization:'edit',  pregnancy:'view',  health_problems:'edit',  can_add_patient:true  },
     midwife: { medical_records:'view', immunization:'none',  pregnancy:'edit',  health_problems:'view',  can_add_patient:false },
     doctor:  { medical_records:'edit', immunization:'view',  pregnancy:'view',  health_problems:'view',  can_add_patient:false },
+    nurse:   { medical_records:'view', immunization:'view', pregnancy:'view', health_problems:'view', can_add_patient:false },
 };
 
 let _roleConfig = null;
@@ -1232,8 +2421,8 @@ async function loadPermissions() {
 
     // Role badge in topbar
     const badge  = document.getElementById('roleBadge');
-    const labels = { admin:'Administrator', bhw:'BHW', midwife:'Midwife', doctor:'Doctor' };
-    const colors = { admin:'#0b1f4b', bhw:'#2255c4', midwife:'#2255c4', doctor:'#2255c4' };
+    const labels = { admin:'Administrator', bhw:'BHW', midwife:'Midwife', doctor:'Doctor', nurse:'Nurse' };
+    const colors = { admin:'#0b1f4b', bhw:'#2255c4', midwife:'#2255c4', doctor:'#2255c4',nurse:'#2255c4' };
     if (badge) {
         badge.textContent      = labels[role] || role.toUpperCase();
         badge.style.background = colors[role] || '#6b7fa8';
@@ -1304,59 +2493,93 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 
 <script>
-    // Function para magpalit ng Step (1 or 2)
-function goToStep(step) {
+ function goToStep(step) {
+    const role = sessionStorage.getItem('user_role') || 'bhw';
+
     const step1 = document.getElementById('formStep1');
     const step2 = document.getElementById('formStep2');
     const indicator1 = document.getElementById('stepIndicator1');
     const indicator2 = document.getElementById('stepIndicator2');
-    
+
     const btnCancel = document.getElementById('btnCancelModal');
     const btnBack = document.getElementById('btnBackStep');
     const btnNext = document.getElementById('btnNextStep');
     const btnSave = document.getElementById('btnSaveRecord');
 
-    if (step === 1) {
-        // Show Step 1
+    // =========================
+    // BHW / NON-DOCTOR
+    // =========================
+    if (role !== 'doctor') {
+        // Only show Vital Signs
         step1.style.display = 'block';
         step2.style.display = 'none';
-        
+
+        // Hide Step 2 indicator
+        indicator1.style.display = 'flex';
+        indicator2.style.display = 'none';
+
         indicator1.classList.add('active');
         indicator2.classList.remove('active');
 
-        // Toggle Buttons
+        // BHW can directly save
+        btnCancel.style.display = 'inline-block';
+        btnBack.style.display = 'none';
+        btnNext.style.display = 'none';
+        btnSave.style.display = 'inline-block';
+
+        btnSave.textContent = 'Save Record';
+
+        return;
+    }
+
+    // =========================
+    // DOCTOR
+    // =========================
+
+    // Step 1 - Vital Signs
+    if (step === 1) {
+        step1.style.display = 'block';
+        step2.style.display = 'none';
+
+        indicator1.style.display = 'flex';
+        indicator2.style.display = 'flex';
+
+        indicator1.classList.add('active');
+        indicator2.classList.remove('active');
+
         btnCancel.style.display = 'inline-block';
         btnBack.style.display = 'none';
         btnNext.style.display = 'inline-block';
         btnSave.style.display = 'none';
-    } else if (step === 2) {
-        // Simple Validation: Siguraduhin na may Visit Date bago lumipat sa Step 2
+
+        btnSave.textContent = 'Save Record';
+
+        return;
+    }
+
+    // Step 2 - Diagnosis & Details
+    if (step === 2) {
         const dateInput = document.getElementById('recDate');
+
         if (!dateInput.value) {
             alert('Please select a Visit Date first.');
             dateInput.focus();
             return;
         }
 
-        // Show Step 2
         step1.style.display = 'none';
         step2.style.display = 'block';
-        
+
         indicator1.classList.remove('active');
         indicator2.classList.add('active');
 
-        // Toggle Buttons
         btnCancel.style.display = 'none';
         btnBack.style.display = 'inline-block';
         btnNext.style.display = 'none';
         btnSave.style.display = 'inline-block';
-    }
-}
 
-// I-reset pabalik sa Step 1 tuwing bubuksan ang modal
-function openAddRecordModal() {
-    goToStep(1); // Balik sa step 1
-    // Ilagay dito ang umiiral mong code sa pag-open ng modal (hal. document.getElementById('addRecordModal').classList.add('active');)
+        btnSave.textContent = 'Save Diagnosis';
+    }
 }
 </script>
 

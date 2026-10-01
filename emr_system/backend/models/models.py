@@ -24,7 +24,7 @@ class User(Base):
     name            = Column(String(150), nullable=False)
     email           = Column(String(150), nullable=False, unique=True)
     password_hash   = Column(String(255), nullable=False)
-    role            = Column(Enum("admin", "bhw", "midwife", "doctor"), nullable=False, default="bhw")
+    role            = Column(Enum("admin", "bhw", "midwife", "doctor","nurse"), nullable=False, default="bhw")
     position        = Column(String(100), nullable=True)
     status          = Column(Enum("active", "inactive", "locked"), nullable=False, default="active")
     is_first_login  = Column(Boolean, nullable=False, default=True)   # True = must change password on first login
@@ -147,10 +147,114 @@ class MedicalRecord(Base):
     created_at       = Column(DateTime, server_default=func.now())
     updated_at       = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    patient = relationship("Patient", back_populates="medical_records")
-    encoder = relationship("User",    back_populates="medical_records")
+    patient = relationship(
+    "Patient",
+    back_populates="medical_records"
+)
 
+    encoder = relationship(
+        "User",
+        back_populates="medical_records"
+    )
 
+    prescriptions = relationship(
+        "MedicalRecordPrescription",
+        back_populates="medical_record",
+        cascade="all, delete-orphan"
+    )
+
+# ============================================================
+# MEDICAL RECORD PRESCRIPTION
+# ============================================================
+class MedicalRecordPrescription(Base):
+    __tablename__ = "medical_record_prescriptions"
+
+    prescription_id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+        autoincrement=True
+    )
+
+    record_id = Column(
+        Integer,
+        ForeignKey(
+            "medical_records.record_id",
+            ondelete="CASCADE"
+        ),
+        nullable=False,
+        index=True
+    )
+
+    item_id = Column(
+        Integer,
+        ForeignKey("inventory_items.item_id"),
+        nullable=False,
+        index=True
+    )
+
+    quantity = Column(
+        Integer,
+        nullable=False
+    )
+
+    instructions = Column(
+        Text,
+        nullable=True
+    )
+
+    status = Column(
+        Enum(
+            "pending",
+            "dispensed",
+            "cancelled"
+        ),
+        nullable=False,
+        default="pending"
+    )
+
+    dispensed_quantity = Column(
+        Integer,
+        nullable=False,
+        default=0
+    )
+
+    dispensed_by = Column(
+        Integer,
+        ForeignKey("users.user_id"),
+        nullable=True,
+        index=True
+    )
+
+    dispensed_at = Column(
+        DateTime,
+        nullable=True
+    )
+
+    created_at = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    updated_at = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    medical_record = relationship(
+        "MedicalRecord",
+        back_populates="prescriptions"
+    )
+
+    item = relationship(
+        "InventoryItem"
+    )
+
+    dispenser = relationship(
+        "User",
+        foreign_keys=[dispensed_by]
+    )
 # ============================================================
 # IMMUNIZATION
 # ============================================================

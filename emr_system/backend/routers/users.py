@@ -52,7 +52,7 @@ async def register_bhw(
     """
     Mag-register ng bagong BHW account (Admin only).
     Walang OTP verification — direktang nire-register ng Admin gamit ang Auto-generated Temp Password at Email.
-    Roles: admin, bhw, midwife, doctor
+    Roles: admin, bhw, midwife, doctor, nurse
     """
     body = await request.json()
     name     = body.get("name", "").strip()
@@ -82,7 +82,7 @@ async def register_bhw(
         name           = name,
         email          = email,
         password_hash  = hash_password(temp_password), # I-hash ang auto-generated password natin
-        role           = role if role in ["admin", "bhw", "midwife", "doctor"] else "bhw",
+        role           = role if role in ["admin", "bhw", "midwife", "doctor","nurse"] else "bhw",
         position       = position or None,
         status         = "active",
         is_first_login = True   # BHW must change password on first login
@@ -114,7 +114,7 @@ async def get_user_stats(
     inactive     = db.query(User).filter(User.role != "admin", User.status == "inactive").count()
     locked       = db.query(User).filter(User.status == "locked").count()
     by_role      = {}
-    for role in ["bhw", "midwife", "doctor"]:
+    for role in ["bhw", "midwife", "doctor", "nurse"]:
         by_role[role] = db.query(User).filter(User.role == role).count()
 
     return {
@@ -172,7 +172,7 @@ async def update_user(
             raise HTTPException(status_code=400, detail="Email is already in use by another account.")
         user.email = new_email
 
-    if "role" in body and body["role"] in ["admin", "bhw", "midwife", "doctor"]:
+    if "role" in body and body["role"] in ["admin", "bhw", "midwife", "doctor","nurse"]:
         user.role = body["role"]
 
     if "position" in body:

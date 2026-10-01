@@ -23,8 +23,8 @@ EMAIL_FROM    = os.getenv("EMAIL_FROM", "noreply@district1health.gov.ph")
 # Pinalitan ang global settings gamit ang Mailtrap port 2525 para iwas network blocking
 SMTP_HOST     = "sandbox.smtp.mailtrap.io"
 SMTP_PORT     = 2525
-SMTP_USER     = "f886475c2226d1"          # Iyong Mailtrap Username
-SMTP_PASSWORD = "aa7613ad2397f6"          # Iyong Mailtrap Password
+SMTP_USER     = "661b70cd21e5f4"          # Iyong Mailtrap Username
+SMTP_PASSWORD = "5a2d5a161a7310"          # Iyong Mailtrap Password
 EMAIL_FROM    = "emr-system@vientereales.gov.ph"
 
 async def send_temporary_password_email(email: str, name: str, role: str, temp_password: str):
