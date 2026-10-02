@@ -4,11 +4,11 @@
 # All data is from the current database instance
 # ============================================================
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import pandas as pd
 
 from database import get_db, get_barangay_name
@@ -23,6 +23,62 @@ COLORS = [
     '#8e44ad','#1abc9c','#e67e22','#3498db','#2ecc71',
     '#e91e63','#ff5722','#607d8b','#795548','#00bcd4'
 ]
+
+MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun',
+                'Jul','Aug','Sep','Oct','Nov','Dec']
+MAX_RANGE_MONTHS = 120   # 10 years — proteksyon laban sa sobrang laking range
+
+
+def resolve_range(year: Optional[int], start_date: Optional[date], end_date: Optional[date]):
+    """
+    Gawing (start, end) ang mga filter parameters.
+    - Kapag may start_date/end_date  -> gamitin ang date range.
+    - Kapag wala, gamitin ang `year` (o current year) -> Jan 1 hanggang Dec 31.
+      (Backward-compatible sa mga lumang tawag na ?year=2026 lang.)
+    """
+    today = date.today()
+    if start_date or end_date:
+        end   = end_date or today
+        start = start_date or date(end.year, 1, 1)
+    else:
+        y = year or today.year
+        start, end = date(y, 1, 1), date(y, 12, 31)
+
+    if start > end:
+        raise HTTPException(status_code=400, detail="start_date must not be after end_date.")
+    if (end.year - start.year) * 12 + (end.month - start.month) + 1 > MAX_RANGE_MONTHS:
+        raise HTTPException(status_code=400, detail="Date range is too large (max 10 years).")
+    return start, end
+
+
+def date_filter(start: date, end: date):
+    """
+    Inclusive na filter sa DiseaseCase.date_recorded.
+    Ang `< end + 1 day` ay gumagana kahit DATE o DATETIME ang column.
+    """
+    return (
+        DiseaseCase.date_recorded >= start,
+        DiseaseCase.date_recorded <  end + timedelta(days=1),
+    )
+
+
+def month_buckets(start: date, end: date):
+    """List ng (year, month) mula start hanggang end, inclusive."""
+    buckets, y, m = [], start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        buckets.append((y, m))
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+    return buckets
+
+
+def bucket_labels(buckets):
+    """'Jan' kung iisang taon lang ang range; 'Jan 2025' kung lampas isang taon."""
+    multi_year = len({y for y, _ in buckets}) > 1
+    return [f"{MONTHS_SHORT[m-1]} {y}" if multi_year else MONTHS_SHORT[m-1]
+            for y, m in buckets]
+
 
 
 @router.get("/dashboard-summary")
@@ -81,39 +137,42 @@ async def dashboard_summary(
 async def disease_trends(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
-    year: Optional[int] = Query(None)
+    year:       Optional[int]  = Query(None),
+    start_date: Optional[date] = Query(None),
+    end_date:   Optional[date] = Query(None)
 ):
     """
     Monthly disease trend data para sa Chart.js line chart.
-    Ibinabalik ang isang dataset per disease, 12 months.
-    Ang labels ay nakasulat na sa chart mismo (datalabels plugin).
+    Ibinabalik ang isang dataset per disease, isang point per buwan
+    sa loob ng napiling date range (o buong taon kung `year` lang ang ipinadala).
     """
-    target_year = year or datetime.now().year
+    start, end = resolve_range(year, start_date, end_date)
+    buckets    = month_buckets(start, end)
+    labels     = bucket_labels(buckets)
+    meta       = {"year": start.year, "start_date": start.isoformat(), "end_date": end.isoformat()}
 
     rows = db.query(
         DiseaseCase.date_recorded,
         DiseaseCase.number_of_cases,
         Disease.disease_name
-    ).join(Disease).filter(
-        extract('year', DiseaseCase.date_recorded) == target_year
-    ).all()
+    ).join(Disease).filter(*date_filter(start, end)).all()
 
     if not rows:
-        return {"labels": [], "datasets": [], "year": target_year}
+        return {"labels": [], "datasets": [], **meta}
 
     df = pd.DataFrame(rows, columns=['date_recorded','number_of_cases','disease_name'])
-    df['month'] = pd.to_datetime(df['date_recorded']).dt.month
+    dt = pd.to_datetime(df['date_recorded'])
+    df['yr']    = dt.dt.year
+    df['month'] = dt.dt.month
 
-    months   = ['Jan','Feb','Mar','Apr','May','Jun',
-                'Jul','Aug','Sep','Oct','Nov','Dec']
     diseases = df['disease_name'].unique().tolist()
 
     datasets = []
     for idx, disease in enumerate(diseases):
         sub    = df[df['disease_name'] == disease]
         totals = []
-        for m in range(1, 13):
-            row = sub[sub['month'] == m]
+        for (y, m) in buckets:
+            row = sub[(sub['yr'] == y) & (sub['month'] == m)]
             totals.append(int(row['number_of_cases'].sum()) if not row.empty else 0)
 
         color = COLORS[idx % len(COLORS)]
@@ -129,26 +188,28 @@ async def disease_trends(
             "borderWidth":      2.5
         })
 
-    return {"labels": months, "datasets": datasets, "year": target_year}
+    return {"labels": labels, "datasets": datasets, **meta}
 
 
 @router.get("/top-diseases")
 async def top_diseases(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
-    year:  Optional[int] = Query(None),
-    limit: int            = Query(8, ge=1, le=15)
+    year:       Optional[int]  = Query(None),
+    start_date: Optional[date] = Query(None),
+    end_date:   Optional[date] = Query(None),
+    limit: int                 = Query(8, ge=1, le=15)
 ):
     """
     Top N diseases by case count para sa doughnut chart.
     """
-    target_year = year or datetime.now().year
+    start, end = resolve_range(year, start_date, end_date)
 
     rows = db.query(
         Disease.disease_name,
         func.sum(DiseaseCase.number_of_cases).label('total')
     ).join(DiseaseCase).filter(
-        extract('year', DiseaseCase.date_recorded) == target_year
+        *date_filter(start, end)
     ).group_by(Disease.disease_name).order_by(
         func.sum(DiseaseCase.number_of_cases).desc()
     ).limit(limit).all()
@@ -164,30 +225,31 @@ async def top_diseases(
 async def monthly_cases(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
-    year: Optional[int] = Query(None)
+    year:       Optional[int]  = Query(None),
+    start_date: Optional[date] = Query(None),
+    end_date:   Optional[date] = Query(None)
 ):
     """
-    Total cases per month para sa bar chart.
+    Total cases per month para sa bar chart (sa loob ng napiling range).
     """
-    target_year = year or datetime.now().year
+    start, end = resolve_range(year, start_date, end_date)
+    buckets    = month_buckets(start, end)
 
     rows = db.query(
+        extract('year',  DiseaseCase.date_recorded).label('yr'),
         extract('month', DiseaseCase.date_recorded).label('month'),
         func.sum(DiseaseCase.number_of_cases).label('total')
     ).filter(
-        extract('year', DiseaseCase.date_recorded) == target_year
-    ).group_by('month').order_by('month').all()
+        *date_filter(start, end)
+    ).group_by('yr', 'month').order_by('yr', 'month').all()
 
-    months_short = ['Jan','Feb','Mar','Apr','May','Jun',
-                    'Jul','Aug','Sep','Oct','Nov','Dec']
-    totals = [0] * 12
-    for r in rows:
-        totals[int(r.month) - 1] = int(r.total)
+    by_month = {(int(r.yr), int(r.month)): int(r.total) for r in rows}
+    totals   = [by_month.get(b, 0) for b in buckets]
 
     return {
-        "labels":          months_short,
+        "labels":          bucket_labels(buckets),
         "data":            totals,
-        "backgroundColor": [COLORS[0]] * 12
+        "backgroundColor": [COLORS[0]] * len(buckets)
     }
 
 
@@ -226,20 +288,23 @@ async def age_distribution(
 async def surveillance(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
-    year: Optional[int] = Query(None)
+    year:       Optional[int]  = Query(None),
+    start_date: Optional[date] = Query(None),
+    end_date:   Optional[date] = Query(None)
 ):
     """
     Disease surveillance table — case counts per disease.
     Para sa Surveillance section ng dashboard.
+    Tumatanggap ng start_date/end_date (YYYY-MM-DD) o ng lumang `year`.
     """
-    target_year = year or datetime.now().year
+    start, end = resolve_range(year, start_date, end_date)
 
     rows = db.query(
         Disease.disease_name,
         Disease.category,
         func.sum(DiseaseCase.number_of_cases).label('total')
     ).join(DiseaseCase).filter(
-        extract('year', DiseaseCase.date_recorded) == target_year
+        *date_filter(start, end)
     ).group_by(Disease.disease_name, Disease.category).order_by(
         func.sum(DiseaseCase.number_of_cases).desc()
     ).all()
@@ -247,7 +312,9 @@ async def surveillance(
     grand_total = sum(r.total for r in rows) if rows else 0
 
     return {
-        "year":        target_year,
+        "year":        start.year,
+        "start_date":  start.isoformat(),
+        "end_date":    end.isoformat(),
         "grand_total": int(grand_total),
         "diseases": [
             {

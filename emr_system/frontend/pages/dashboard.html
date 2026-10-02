@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard ── EMR System</title>
+    <link rel="icon" type="image/png" href="frontend/img/DARK MODE (1).png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -47,9 +48,9 @@
             <span class="nav-icon"><i class="fa-solid fa-boxes-stacked"></i></span>
             <span>Inventory</span>
         </a>
-        <a class="nav-link admin-only" onclick="showSection('bhw-mgmt')" data-s="bhw-mgmt" title="BHW Management">
+        <a class="nav-link admin-only" onclick="showSection('bhw-mgmt')" data-s="bhw-mgmt" title="Team Management">
             <span class="nav-icon"><i class="fa-solid fa-user-gear"></i></span>
-            <span>BHW Management</span>
+            <span>Team Management</span>
         </a>
         <a class="nav-link admin-only" onclick="showSection('reports')" data-s="reports" title="Reports">
             <span class="nav-icon"><i class="fa-solid fa-file-lines"></i></span>
@@ -59,7 +60,6 @@
             <span class="nav-icon"><i class="fa-solid fa-clipboard-list"></i></span>
             <span>Audit Logs</span>
         </a>
-        
     </nav>
     <div class="sb-profile">
         <div class="sb-av" id="sbAvatar">A</div>
@@ -92,11 +92,11 @@
     </div>
     <div class="tb-right">
         <div class="tb-date" id="dateDisplay">—</div>
-        <span id="dashRoleBadge" style="font-size:11px;font-weight:700;color:#fff;padding:4px 12px;border-radius:20px;letter-spacing:.04em;background:var(--navy)">—</span>
+        <span class="tb-role" id="dashRoleBadge">—</span>
         <!-- New Mode Toggle Button -->
-        <!-- <button class="tb-icon-btn" id="themeToggle" title="Toggle Light/Dark Mode">
-            <i class="fas fa-moon" id="themeIcon"></i>
-        </button> -->
+        <button class="tb-icon-btn" onclick="openModal('')" aria-label="Notification" title="Notification">
+            <i class="fas fa-bell"></i>
+        </button>
     
         <button class="tb-icon-btn" onclick="openModal('helpModal')" aria-label="Help & info" title="Help & info">
             <i class="fa-regular fa-circle-question" aria-hidden="true"></i>
@@ -168,7 +168,17 @@
             <div class="sec-title">Disease Surveillance</div>
             <div class="sec-sub">Auto-counted from patient diagnosis entries</div>
         </div>
-        <select class="year-sel" id="survYear" onchange="loadSurveillance()"></select>
+        <div class="date-range-picker" id="survDateRange">
+            <div class="dr-field">
+                <i class="fa-regular fa-calendar dr-icon"></i>
+                <input type="text" class="dr-input" id="survStartDate" aria-label="Start date">
+            </div>
+            <span class="dr-to">to</span>
+            <div class="dr-field">
+                <i class="fa-regular fa-calendar dr-icon"></i>
+                <input type="text" class="dr-input" id="survEndDate" aria-label="End date">
+            </div>
+        </div>
     </div>
     <div class="stats-grid" id="survStats"></div>
     <div class="grid-2">
@@ -184,7 +194,7 @@
             </div>
         </div>
         <div class="card">
-            <div class="card-header"><div class="card-title">Trend This Year</div></div>
+            <div class="card-header"><div class="card-title" id="survTrendTitle">Trend in Selected Period</div></div>
             <div class="card-body">
                 <div style="height:280px;position:relative"><canvas id="survTrendChart"></canvas></div>
             </div>
@@ -196,7 +206,7 @@
 <div class="page-section" id="sec-analytics">
     <div class="sec-header">
         <div>
-            <div class="sec-title">Disease Trend Analytics</div>
+            <div class="sec-title">Trend Analytics</div>
             <div class="sec-sub">Visual analysis of disease patterns</div>
         </div>
         <div class="date-range-picker" id="analyticsDateRange">
@@ -231,7 +241,7 @@
         <div class="card-body">
             <div class="chart-panel active" id="panel-line">
                 <div class="chart-panel-head">
-                    <div class="card-title">Monthly Disease Trends</div>
+                    <div class="card-title">Disease Trends</div>
                     <div class="sec-sub" id="lineRangeLabel">Case counts per disease over the selected period</div>
                 </div>
                 <div style="height:340px;position:relative"><canvas id="analyticsLineChart"></canvas></div>
@@ -270,8 +280,8 @@
 <div class="page-section" id="sec-bhw-mgmt">
     <div class="sec-header">
         <div>
-            <div class="sec-title">Health Staff Management</div>
-            <div class="sec-sub">Manage health worker accounts — Admin access only</div>
+            <div class="sec-title">Personnel Management</div>
+            <div class="sec-sub">Manage personnel accounts — Admin access only</div>
         </div>
     </div>
     <div class="stats-grid">
@@ -515,7 +525,7 @@
             </div>
             <div class="form-group" style="margin-bottom:0">
                 <label>System Version</label>
-                <p style="font-size:13px;color:var(--muted)">District 1 EMR &middot; v1.0</p>
+                <p style="font-size:13px;color:var(--muted)">District 1 EMR &middot; v1.4</p>
             </div>
         </div>
         <div class="modal-footer">
@@ -546,7 +556,8 @@
                         <option value="nurse">Nurse</option>
                     </select>
                 </div>
-                </div>
+                <div class="form-group"><label>Position / Title</label><input type="text" id="bPos" placeholder="e.g. Municipal Health Officer"></div>
+            </div>
             <div style="background:#e8f8f0;border:1px solid var(--teal2);border-radius:8px;padding:10px 13px;font-size:12.5px;color:var(--teal)">
                 A secure temporary password will be generated automatically and emailed to this address. The staff member will be required to change it on first login.
             </div>
@@ -591,11 +602,18 @@
 
         <!-- Password Tab -->
         <div id="profPasswordPane" style="display:none">
-            <div class="form-group"><label>Current Password *</label><div class="pw-field-wrap"><input type="password" id="pwCurrent" placeholder="Enter current password"><i class="fa-solid fa-eye pw-toggle-eye" onclick="togglePwVisibility('pwCurrent', this)"></i></div></div>
-            <div class="form-group"><label>New Password *</label><div class="pw-field-wrap"><input type="password" id="pwNew" placeholder="Min. 8 chars, mixed case + number + symbol"><i class="fa-solid fa-eye pw-toggle-eye" onclick="togglePwVisibility('pwNew', this)"></i></div></div>
-            <div class="form-group"><label>Confirm New Password *</label><div class="pw-field-wrap"><input type="password" id="pwConfirm" placeholder="Re-enter new password"><i class="fa-solid fa-eye pw-toggle-eye" onclick="togglePwVisibility('pwConfirm', this)"></i></div></div>
-            <div style="background:#e8f8f0;border:1px solid var(--teal2);border-radius:8px;padding:10px 13px;font-size:12px;color:var(--teal)">
-                Password must contain: uppercase, lowercase, number, and special character (!@#$%^&amp;*).
+            <div class="form-group"><label>Current Password *</label><div class="pw-field-wrap"><input type="text" id="pwCurrent" placeholder="Enter current password"></div></div>
+            <div class="form-group"><label>New Password *</label><div class="pw-field-wrap"><input type="password" id="pwNew" placeholder="Enter new password" oninput="updatePwRequirements(this.value, 'pwRequirements'); checkPwMatch('pwNew','pwConfirm','pwMatch');"><i class="fa-solid fa-eye pw-toggle-eye" onclick="togglePwVisibility('pwNew', this)"></i></div>
+                <ul id="pwRequirements" class="fl-subText">
+                    <li data-rule="length" style="color:var(--red);transition:color .15s ease;display:flex;align-items:center;gap:7px"><i class="fa-solid fa-circle-xmark" style="font-size:11px"></i><span>At least 8 characters</span></li>
+                    <li data-rule="upper" style="color:var(--red);transition:color .15s ease;display:flex;align-items:center;gap:7px"><i class="fa-solid fa-circle-xmark" style="font-size:11px"></i><span>One uppercase letter</span></li>
+                    <li data-rule="lower" style="color:var(--red);transition:color .15s ease;display:flex;align-items:center;gap:7px"><i class="fa-solid fa-circle-xmark" style="font-size:11px"></i><span>One lowercase letter</span></li>
+                    <li data-rule="number" style="color:var(--red);transition:color .15s ease;display:flex;align-items:center;gap:7px"><i class="fa-solid fa-circle-xmark" style="font-size:11px"></i><span>One number</span></li>
+                    <li data-rule="special" style="color:var(--red);transition:color .15s ease;display:flex;align-items:center;gap:7px"><i class="fa-solid fa-circle-xmark" style="font-size:11px"></i><span>One special character</span></li>
+                </ul>
+            </div>
+            <div class="form-group"><label>Confirm New Password *</label><div class="pw-field-wrap"><input type="password" id="pwConfirm" placeholder="Re-enter new password" oninput="checkPwMatch('pwNew','pwConfirm','pwMatch')"><i class="fa-solid fa-eye pw-toggle-eye" onclick="togglePwVisibility('pwConfirm', this)"></i></div>
+                <div id="pwMatch" class="fl-subTxt"><i style="font-size:11px"></i><span></span></div>
             </div>
             <div id="pwMsg" style="display:none;padding:9px 13px;border-radius:8px;font-size:13px;margin-top:12px"></div>
         </div>
@@ -699,11 +717,11 @@
 </div>
 </div>
 
-<!-- Custom Confirmation Modal Box -->
+<!-- Confirmation Modal Box -->
 <div id="customConfirmOverlay" class="modal-overlay">
     <div class="modal" style="max-width: 400px; text-align: center;">
         <div class="modal-body" style="padding: 32px 24px;">
-            <div style="font-size: 36px; color: var(--orange); margin-bottom: 16px;">
+            <div style="font-size: 36px; color: var(--red); margin-bottom: 16px;">
                 <i class="fas fa-exclamation-triangle"></i>
             </div>
             <h3 style="font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 8px;">Unsaved Changes</h3>
@@ -719,14 +737,71 @@
     </div>
 </div>
 
+<!-- ===== DEACTIVATE / ACTIVATE / UNLOCK ACCOUNT MODAL (BHW tab) ===== -->
+<div class="modal-overlay" id="statusModal" role="dialog" aria-modal="true" aria-labelledby="statusModalTitle">
+    <div class="modal status-modal tone-danger" id="statusModalBox">
+        <div class="status-modal-body">
+            <div class="status-icon"><i class="fa-solid fa-user-slash" id="statusModalIcon"></i></div>
+            <h3 class="status-title" id="statusModalTitle">Deactivate Account</h3>
+            <p class="status-text" id="statusModalText"></p>
+
+            <div class="status-user">
+                <div class="status-avatar" id="statusUserAvatar">?</div>
+                <div class="status-user-info">
+                    <div class="status-user-name" id="statusUserName">—</div>
+                    <div class="status-user-email" id="statusUserEmail">—</div>
+                </div>
+                <span class="badge" id="statusUserRole"></span>
+            </div>
+
+            <div class="status-error" id="statusModalError" role="alert"></div>
+        </div>
+        <div class="status-actions">
+            <button type="button" class="btn status-btn-keep" id="statusCancelBtn" onclick="closeStatusModal()">Keep Active</button>
+            <button type="button" class="btn status-btn-confirm" id="statusConfirmBtn" onclick="confirmStatusChange()">Yes, Deactivate</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== ACCOUNT CREATED (SUCCESS) MODAL (BHW tab) ===== -->
+<div class="modal-overlay" id="regSuccessModal" role="dialog" aria-modal="true" aria-labelledby="regSuccessTitle">
+    <div class="modal success-modal">
+        <div class="success-modal-body">
+            <div class="success-check"><i class="fa-solid fa-check"></i></div>
+            <h3 class="success-title" id="regSuccessTitle">Account Created</h3>
+            <p class="success-sub"><strong id="rsName">—</strong> can now sign in to the system.</p>
+
+            <dl class="success-details">
+                <div class="success-row"><dt>Email</dt><dd id="rsEmail">—</dd></div>
+                <div class="success-row"><dt>Role</dt><dd><span class="badge" id="rsRole">—</span></dd></div>
+                <div class="success-row"><dt>Position</dt><dd id="rsPosition">—</dd></div>
+            </dl>
+
+            <div class="success-note">
+                <i class="fa-solid fa-envelope-circle-check"></i>
+                <span>A temporary password was emailed to <strong id="rsEmailNote">—</strong>. They will be asked to set a new password on first login.</span>
+            </div>
+        </div>
+        <div class="success-actions">
+            <button type="button" class="btn btn-outline" onclick="registerAnother()">
+                <i class="fa-solid fa-user-plus"></i> Register Another
+            </button>
+            <button type="button" class="btn btn-primary" id="regSuccessDoneBtn" onclick="closeRegSuccess()">Done</button>
+        </div>
+    </div>
+</div>
+
+
+
 <!-- SESSION LOCK -->
-<div id="sessionLock">
+<div id="sessionLock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
     <div class="lock-card">
-        <h2>Session Locked</h2>
+        <h2 id="lockTitle">Session Locked</h2>
         <p>Locked due to inactivity.<br>Re-enter your password to continue.</p>
-        <div class="pw-field-wrap" style="margin-bottom:10px"><input type="password" class="lock-input" id="unlockPwd" placeholder="Password" onkeydown="if(event.key==='Enter')unlockSess()" style="margin-bottom:0"><i class="fa-solid fa-eye pw-toggle-eye" onclick="togglePwVisibility('unlockPwd', this)"></i></div>
+        <div class="pw-field-wrap" style="margin-bottom:10px"><input type="password" class="lock-input" id="unlockPwd" placeholder="Password" onkeydown="if(event.key==='Enter')unlockSession()" style="margin-bottom:0"><i class="fa-solid fa-eye pw-toggle-eye" onclick="togglePwVisibility('unlockPwd', this)"></i></div>
         <div id="unlockError">Incorrect password.</div>
-        <button class="btn-unlock" onclick="unlockSess()">Unlock</button>
+        <button class="btn-unlock" onclick="unlockSession()">Unlock</button>
+        <a href="#" onclick="logoutFromLock(); return false;" style="display:block;margin-top:14px;font-size:12px;color:var(--muted);text-decoration:underline">Sign in as a different user</a>
     </div>
 </div>
 
@@ -774,7 +849,7 @@ function fillYearSelect(id) {
         sel.appendChild(o);
     }
 }
-['dashYearFilter','survYear','rptYear'].forEach(fillYearSelect);
+['dashYearFilter','rptYear'].forEach(fillYearSelect);
 
 /* ── Analytics date-range filter ── */
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -812,6 +887,45 @@ function initAnalyticsDateRange() {
 }
 initAnalyticsDateRange();
 
+/* ── Surveillance date-range filter ── */
+let survRangePicker;
+
+function initSurvDateRange() {
+    const rangeEl = document.getElementById('survDateRange');
+    const startEl = document.getElementById('survStartDate');
+    const endEl   = document.getElementById('survEndDate');
+    if (!rangeEl || !startEl || !endEl) return;
+
+    const today = new Date();
+    const jan1  = new Date(today.getFullYear(), 0, 1);
+
+    survRangePicker = new DateRangePicker(rangeEl, {
+        format: 'mm-dd-yyyy',
+        autohide: true,
+        todayHighlight: true,
+        maxDate: today,
+        prevArrow: '<i class="fa-solid fa-chevron-left"></i>',
+        nextArrow: '<i class="fa-solid fa-chevron-right"></i>'
+    });
+
+    survRangePicker.setDates(jan1, today);
+
+    startEl.addEventListener('changeDate', onSurvDateChange);
+    endEl.addEventListener('changeDate', onSurvDateChange);
+}
+initSurvDateRange();
+
+function onSurvDateChange() {
+    const startEl = document.getElementById('survStartDate');
+    const endEl   = document.getElementById('survEndDate');
+    if (!startEl.value || !endEl.value) return;
+    if (startEl.value > endEl.value) {
+        showToast('Start date must be before the end date.', 'error');
+        return;
+    }
+    loadSurveillance();
+}
+
 function onAnalyticsDateChange() {
     const startEl = document.getElementById('analyticsStartDate');
     const endEl   = document.getElementById('analyticsEndDate');
@@ -829,7 +943,7 @@ const TITLES = {
     'surveillance': 'Disease Surveillance',
     'analytics':    'Disease Trend Analytics',
     'inventory':    'Inventory',
-    'bhw-mgmt':     'BHW Management',
+    'bhw-mgmt':     'Team Management',
     'reports':      'Reports & Export',
     'audit':        'Audit Logs'
 };
@@ -1077,16 +1191,20 @@ async function loadAgeChart() {
 
 /* ── SURVEILLANCE ── */
 async function loadSurveillance() {
-    const year = document.getElementById('survYear')?.value || CUR_YEAR;
+    const startDate = document.getElementById('survStartDate')?.value;
+    const endDate   = document.getElementById('survEndDate')?.value;
+    if (!startDate || !endDate) return;
+    const qs = `start_date=${startDate}&end_date=${endDate}`;
+    const rangeLabel = `${formatDisplayDate(startDate)} – ${formatDisplayDate(endDate)}`;
     try {
-        const data = await apiGet(`/api/analytics/surveillance?year=${year}`);
+        const data = await apiGet(`/api/analytics/surveillance?${qs}`);
         if (!data) return;
 
         // Stat cards
         document.getElementById('survStats').innerHTML = `
             <div class="stat-card blue"><div class="stat-icon"><i class="fa-solid fa-book-medical"></i></div>
                 <div class="stat-value">${data.grand_total}</div>
-                <div class="stat-label">Total Cases ${year}</div></div>
+                <div class="stat-label">Total Cases</div></div>
             <div class="stat-card red"><div class="stat-icon"><i class="fa-solid fa-file-medical"></i></div>
                 <div class="stat-value">${data.diseases.length}</div>
                 <div class="stat-label">Diseases Recorded</div></div>
@@ -1119,7 +1237,9 @@ async function loadSurveillance() {
         }
 
         // Trend chart in surveillance panel
-        const tdata = await apiGet(`/api/analytics/disease-trends?year=${year}`);
+        const tTitle = document.getElementById('survTrendTitle');
+        if (tTitle) tTitle.textContent = `Trend • ${rangeLabel}`;
+        const tdata = await apiGet(`/api/analytics/disease-trends?${qs}`);
         const ctx   = document.getElementById('survTrendChart');
         if (ctx && tdata) {
             destroyChart('survTrend');
@@ -1288,6 +1408,7 @@ async function loadBHW() {
             apiGet('/api/users/'),
             apiGet('/api/users/stats/summary')
         ]);
+        staffCache = users || [];
 
         // Stat cards
         if (stats) {
@@ -1427,6 +1548,8 @@ async function submitEditStaff() {
 }
 
 /* ── Register New Staff ── */
+const ROLE_LABELS = { admin:'Administrator', bhw:'BHW', midwife:'Midwife', doctor:'Doctor', nurse:'Nurse' };
+
 async function registerBHW() {
     const name = document.getElementById('bName')?.value.trim();
     const email = document.getElementById('bEmail')?.value.trim();
@@ -1434,26 +1557,143 @@ async function registerBHW() {
     const role  = document.getElementById('bRole')?.value || 'bhw';
 
     if (!name || !email) { showToast('Name and email are required.', 'warning'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast('Please enter a valid email address.', 'warning'); return; }
+
+    const saveBtn = document.querySelector('#regBHWModal .btn-primary');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
 
     try {
         const r = await apiPost('/api/users/register', { name, email, position: pos || null, role });
         if (r) {
-            showToast(`${r.name} (${role}) account created. Temporary password sent to ${r.email}.`, 'success');
             closeModal('regBHWModal');
             ['bName','bEmail','bPos'].forEach(id => {
                 const el = document.getElementById(id); if (el) el.value = '';
             });
             const bRoleEl = document.getElementById('bRole');
             if (bRoleEl) bRoleEl.selectedIndex = 0;
+
+            showRegSuccess({
+                name:     r.name     || name,
+                email:    r.email    || email,
+                role:     r.role     || role,
+                position: r.position || pos || ''
+            });
             loadBHW();
         }
-    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+    } catch(e) {
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Account'; }
+    }
 }
 
-/* ── Toggle user active/inactive/unlock ── */
-async function toggleUser(userId, newStatus) {
-    const label = newStatus === 'active' ? 'activate' : 'deactivate';
-    if (!confirm(`Are you sure you want to ${label} this account?`)) return;
+/* ── "Account Created" success modal ── */
+function showRegSuccess(u) {
+    const rc = ROLE_COLORS[u.role] || ROLE_COLORS.bhw;
+    document.getElementById('rsName').textContent      = u.name;
+    document.getElementById('rsEmail').textContent     = u.email;
+    document.getElementById('rsEmailNote').textContent = u.email;
+    document.getElementById('rsPosition').textContent  = u.position || '—';
+
+    const roleEl = document.getElementById('rsRole');
+    roleEl.textContent      = ROLE_LABELS[u.role] || u.role;
+    roleEl.style.background = rc.bg;
+    roleEl.style.color      = rc.color;
+
+    openModal('regSuccessModal');
+    document.getElementById('regSuccessDoneBtn')?.focus();
+}
+function closeRegSuccess() { closeModal('regSuccessModal'); }
+function registerAnother() {
+    closeRegSuccess();
+    openModal('regBHWModal');
+    setTimeout(() => document.getElementById('bName')?.focus(), 50);
+}
+
+/* ── Deactivate / Activate / Unlock account modal ── */
+let staffCache    = [];      // filled by loadBHW()
+let pendingStatus = null;    // { userId, newStatus, user }
+let statusBusy    = false;
+
+const STATUS_MODAL_CONFIG = {
+    deactivate: {
+        tone: 'danger',  icon: 'fa-user-slash',
+        title: 'Deactivate Account',
+        text:  "This person won't be able to sign in until the account is reactivated. Their records are kept, so nothing is deleted.",
+        cancel: 'Keep Active',  confirm: 'Yes, Deactivate', busy: 'Deactivating...', done: 'deactivated'
+    },
+    activate: {
+        tone: 'success', icon: 'fa-user-check',
+        title: 'Activate Account',
+        text:  'This person will be able to sign in again with their existing password.',
+        cancel: 'Cancel',       confirm: 'Yes, Activate',   busy: 'Activating...',   done: 'activated'
+    },
+    unlock: {
+        tone: 'warning', icon: 'fa-lock-open',
+        title: 'Unlock Account',
+        text:  'This clears the lock so they can try signing in again.',
+        cancel: 'Cancel',       confirm: 'Yes, Unlock',     busy: 'Unlocking...',    done: 'unlocked'
+    }
+};
+
+function openStatusModal(userId, newStatus) {
+    const user = staffCache.find(u => Number(u.user_id) === Number(userId));
+    if (!user) { showToast('Account not found. Please refresh the list.', 'error'); return; }
+
+    const mode = newStatus === 'inactive' ? 'deactivate'
+               : user.status === 'locked' ? 'unlock'
+               : 'activate';
+    const cfg = STATUS_MODAL_CONFIG[mode];
+    pendingStatus = { userId, newStatus, user, mode };
+
+    const box = document.getElementById('statusModalBox');
+    box.className = `modal status-modal tone-${cfg.tone}`;
+    document.getElementById('statusModalIcon').className = `fa-solid ${cfg.icon}`;
+    document.getElementById('statusModalTitle').textContent = cfg.title;
+    document.getElementById('statusModalText').textContent  = cfg.text;
+
+    document.getElementById('statusUserAvatar').textContent = (user.name || '?').trim().charAt(0).toUpperCase();
+    document.getElementById('statusUserName').textContent   = user.name  || '—';
+    document.getElementById('statusUserEmail').textContent  = user.email || '—';
+
+    const rc = ROLE_COLORS[user.role] || ROLE_COLORS.bhw;
+    const roleEl = document.getElementById('statusUserRole');
+    roleEl.textContent      = (ROLE_LABELS[user.role] || user.role || '').toString();
+    roleEl.style.background = rc.bg;
+    roleEl.style.color      = rc.color;
+
+    const errEl = document.getElementById('statusModalError');
+    errEl.textContent = ''; errEl.classList.remove('show');
+
+    const cancelBtn  = document.getElementById('statusCancelBtn');
+    const confirmBtn = document.getElementById('statusConfirmBtn');
+    cancelBtn.textContent  = cfg.cancel;
+    confirmBtn.textContent = cfg.confirm;
+    cancelBtn.disabled = confirmBtn.disabled = false;
+
+    openModal('statusModal');
+    cancelBtn.focus();          // safe option gets focus first
+}
+
+function closeStatusModal() {
+    if (statusBusy) return;     // don't close mid-request
+    closeModal('statusModal');
+    pendingStatus = null;
+}
+
+async function confirmStatusChange() {
+    if (!pendingStatus || statusBusy) return;
+    const { userId, newStatus, user, mode } = pendingStatus;
+    const cfg        = STATUS_MODAL_CONFIG[mode];
+    const cancelBtn  = document.getElementById('statusCancelBtn');
+    const confirmBtn = document.getElementById('statusConfirmBtn');
+    const errEl      = document.getElementById('statusModalError');
+
+    statusBusy = true;
+    cancelBtn.disabled = confirmBtn.disabled = true;
+    confirmBtn.textContent = cfg.busy;
+    errEl.classList.remove('show');
+
     try {
         const r = await fetch(`${window.location.origin}/api/users/${userId}`, {
             method:  'PUT',
@@ -1463,10 +1703,39 @@ async function toggleUser(userId, newStatus) {
             },
             body: JSON.stringify({ status: newStatus })
         });
-        if (r.ok) { showToast(`Account ${newStatus}.`, 'success'); loadBHW(); }
-        else { const d = await r.json(); showToast('Error: ' + (d.detail || 'Failed.'), 'error'); }
-    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+
+        if (r.ok) {
+            statusBusy = false;
+            closeStatusModal();
+            showToast(`${user.name} ${cfg.done}.`, 'success');
+            loadBHW();
+            return;
+        }
+        let detail = 'Something went wrong. Please try again.';
+        try { const d = await r.json(); if (d && d.detail) detail = typeof d.detail === 'string' ? d.detail : detail; } catch (_) {}
+        errEl.textContent = detail;
+    } catch (e) {
+        errEl.textContent = 'Cannot connect to the server. Please try again.';
+    }
+
+    // failure path: keep the modal open so the admin can retry or back out
+    errEl.classList.add('show');
+    statusBusy = false;
+    cancelBtn.disabled = confirmBtn.disabled = false;
+    confirmBtn.textContent = cfg.confirm;
 }
+
+/* Esc closes these two modals; backdrop click is blocked while a request is running */
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('statusModal')?.classList.contains('show'))     closeStatusModal();
+    if (document.getElementById('regSuccessModal')?.classList.contains('show')) closeRegSuccess();
+});
+document.getElementById('statusModal')?.addEventListener('click', e => {
+    if (e.target.id !== 'statusModal') return;
+    if (statusBusy) { e.stopPropagation(); return; }
+    pendingStatus = null;       // the global handler removes .show
+}, true);
 
 /* ── AUDIT LOGS ── */
 async function loadAuditLogs() {
@@ -1519,25 +1788,7 @@ async function confirmLogout() {
     sessionStorage.clear(); window.location.href='/';
 }
 
-/* ── UNLOCK SESSION ── */
-async function unlockSess() {
-    const pw    = document.getElementById('unlockPwd').value;
-    const email = sessionStorage.getItem('user_email') || '';
-    if (!pw) return;
-    try {
-        const res = await fetch(`${API}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pw})});
-        if (res.ok) {
-            const d = await res.json();
-            sessionStorage.setItem('access_token', d.access_token);
-            sessionStorage.setItem('token_expires', String(Date.now()+d.expires_in*1000));
-            document.getElementById('sessionLock').classList.remove('show');
-            document.getElementById('unlockError').style.display='none';
-        } else {
-            document.getElementById('unlockPwd').value='';
-            document.getElementById('unlockError').style.display='block';
-        }
-    } catch { document.getElementById('unlockError').style.display='block'; }
-}
+/* ── UNLOCK SESSION: nasa ../js/session.js na (unlockSession) ── */
 
 
 /* ============================================================
@@ -1588,6 +1839,8 @@ async function loadProfileModal() {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
+        updatePwRequirements('', 'pwRequirements');
+        checkPwMatch('pwNew', 'pwConfirm', 'pwMatch');
     } catch(e) {
         showToast('Error loading profile.', 'error');
     }
@@ -1617,10 +1870,6 @@ async function saveProfile() {
         const data = await r.json();
         if (r.ok) {
             // Update session storage + sidebar
-            console.log("FULL LOGIN DATA:", data);
-            console.log("DATA.ROLE:", data.role);
-
-            sessionStorage.setItem('user_role', data.role);
             sessionStorage.setItem('user_name', data.name);
             document.getElementById('sbName').textContent      = data.name;
             document.getElementById('profModalName').textContent = data.name;
@@ -1656,6 +1905,11 @@ async function changePassword() {
         msgEl.style.cssText = 'display:block;background:#ffeaea;color:var(--red);border-radius:8px;padding:9px 13px;font-size:13px';
         return;
     }
+    if (!updatePwRequirements(newPw, 'pwRequirements')) {
+        msgEl.textContent  = 'Password does not meet all the requirements.';
+        msgEl.style.cssText = 'display:block;background:#ffeaea;color:var(--red);border-radius:8px;padding:9px 13px;font-size:13px';
+        return;
+    }
 
     try {
         const r = await fetch(`${window.location.origin}/api/auth/change-password`, {
@@ -1677,6 +1931,8 @@ async function changePassword() {
             ['pwCurrent','pwNew','pwConfirm'].forEach(id => {
                 const el = document.getElementById(id); if (el) el.value = '';
             });
+            updatePwRequirements('', 'pwRequirements');
+            checkPwMatch('pwNew', 'pwConfirm', 'pwMatch');
             showToast('Password changed successfully.', 'success');
         } else {
             msgEl.textContent  = '❌ ' + (data.detail || 'Error changing password.');
@@ -1704,7 +1960,7 @@ function togglePwVisibility(inputId, iconEl) {
 /* ============================================================
    FIRST LOGIN — Live password requirement checklist
    ============================================================ */
-function updatePwRequirements(value) {
+function updatePwRequirements(value, listId = 'flPwRequirements') {
     const rules = {
         length:  value.length >= 8,
         upper:   /[A-Z]/.test(value),
@@ -1714,7 +1970,7 @@ function updatePwRequirements(value) {
     };
 
     Object.keys(rules).forEach(rule => {
-        const li = document.querySelector(`#flPwRequirements li[data-rule="${rule}"]`);
+        const li = document.querySelector(`#${listId} li[data-rule="${rule}"]`);
         if (!li) return;
         const icon = li.querySelector('i');
         const passed = rules[rule];
@@ -1729,10 +1985,10 @@ function updatePwRequirements(value) {
     return Object.values(rules).every(Boolean);
 }
 
-function checkPwMatch() {
-    const newPw    = document.getElementById('fl_new')?.value || '';
-    const confirm  = document.getElementById('fl_confirm')?.value || '';
-    const matchEl  = document.getElementById('flPwMatch');
+function checkPwMatch(newId = 'fl_new', confirmId = 'fl_confirm', matchId = 'flPwMatch') {
+    const newPw    = document.getElementById(newId)?.value || '';
+    const confirm  = document.getElementById(confirmId)?.value || '';
+    const matchEl  = document.getElementById(matchId);
     if (!matchEl) return false;
 
     if (!confirm) {

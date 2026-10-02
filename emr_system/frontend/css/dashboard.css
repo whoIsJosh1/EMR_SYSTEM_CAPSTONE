@@ -12,7 +12,7 @@
     /* Semantic Shared Muted Palettes */
     --teal: #14b8a6;
     --teal2: #2dd4bf;
-    --red: #f43f5e;
+    --red: #cd1415;
     --orange: #f59e0b;
     --black: #000000;
     --purple: #a855f7;
@@ -60,7 +60,8 @@
     --shadow-inset2: inset 6px 6px 12px #1b2437,
         inset -4px -4px 10px #6f737c;
 
-    --bx-shdw: 0 2px 12px rgba(11, 31, 75, .08);
+    /* --bx-shdw: 0 2px 12px rgba(11, 31, 75, .08); */
+    --bx-shdw: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
     --topbar-glow: #beccd5;
 }
 
@@ -258,6 +259,7 @@ body {
     display: flex;
     align-items: center;
     box-shadow: 0 0 20px #4c4c4d;
+    z-index: 1;
 }
 
 .sb-logo {
@@ -294,19 +296,19 @@ body {
     height: max-content;
     display: flex;
     flex-direction: row;
-    justify-content: space-between;
+    justify-content: center;
     align-items: center;
     padding: 15px 12px;
     box-shadow: 0 0 20px #4c4c4d;
 }
 
 .sb-av {
-    width: 32px;
+    width: none;
     height: 32px;
     background: var(--navy);
     box-shadow: var(--shadow-inset2);
     border-radius: 50%;
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     color: var(--text2);
@@ -444,6 +446,16 @@ body {
     box-shadow: var(--shadow-inset);
 }
 
+.tb-role {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--white);
+    padding: 6px 14px;
+    border-radius: 20px;
+    letter-spacing: .04em;
+    background: var(--navy)
+}
+
 .tb-btn {
     background: var(--card);
     border: none;
@@ -553,9 +565,10 @@ body {
     width: 8px;
     height: 8px;
     border-radius: 50%;
+    background: var(--brand-hover);
 }
 
-.stat-card.blue::after {
+/* .stat-card.blue::after {
     background: var(--brand)
 }
 
@@ -581,7 +594,7 @@ body {
 
 .stat-card.pink::after {
     background: #f43f5e
-}
+} */
 
 .stat-icon {
     width: 40px;
@@ -593,9 +606,10 @@ body {
     font-size: 18px;
     margin-bottom: 12px;
     box-shadow: var(--shadow-inset);
+    color: var(--blue);
 }
 
-.blue .stat-icon {
+/* .blue .stat-icon {
     color: var(--brand);
 }
 
@@ -617,7 +631,7 @@ body {
 
 .pink .stat-icon {
     color: #f43f5e;
-}
+} */
 
 .stat-value {
     font-size: 26px;
@@ -779,6 +793,11 @@ tbody td {
     padding: 6px 14px;
     font-size: 12px;
     border-radius: 8px;
+}
+
+.btn-danger {
+    background: var(--red);
+    color: #fff
 }
 
 /* Floating Action Button */
@@ -1807,8 +1826,6 @@ tbody td {
     margin: 8 0 16px;
     padding: 10px 13px;
     background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
     font-size: 12.5px;
     display: flex;
     flex-direction: column;
@@ -1879,7 +1896,6 @@ tbody td {
     }
 
     .sb-uname {
-        color: var(--text);
         font-size: 12.5px;
         font-weight: 600;
         display: block;
@@ -1960,4 +1976,205 @@ tbody td {
     .form-row {
         grid-template-columns: 1fr
     }
+}
+
+/* ══════════════════════════════════════════════════════════
+   BHW TAB — Deactivate / Activate / Unlock modal
+   ══════════════════════════════════════════════════════════ */
+.status-modal {
+    --tone: var(--red);          /* icon + accents */
+    --tone-strong: #cd1415;      /* button fill (passes contrast with white text) */
+    --tone-bg: #ffeaea;
+    max-width: 420px;
+    overflow: hidden;
+    text-align: center;
+    animation: modalPop .18s ease-out;
+}
+.status-modal.tone-success { --tone: var(--teal);   --tone-strong: #0f766e; --tone-bg: #e8f8f0; }
+.status-modal.tone-warning { --tone: var(--orange); --tone-strong: #b45309; --tone-bg: #fff4dc; }
+
+.status-modal-body { padding: 30px 26px 8px; }
+
+.status-icon {
+    width: 60px; height: 60px;
+    margin: 0 auto 16px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--tone-bg);
+    color: var(--tone);
+    font-size: 24px;
+}
+.status-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.status-text  { font-size: 13.5px; line-height: 1.55; color: var(--muted); max-width: 320px; margin: 0 auto 20px; }
+
+.status-user {
+    display: flex; align-items: center; gap: 12px;
+    text-align: left;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--tone);
+    border-radius: 10px;
+    background: var(--card);
+}
+.status-avatar {
+    width: 38px; height: 38px; flex-shrink: 0;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, var(--blue2), var(--teal));
+    color: #fff; font-weight: 700; font-size: 15px;
+}
+.status-user-info { flex: 1; min-width: 0; }
+.status-user-name  { font-size: 13.5px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-user-email { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-user .badge { flex-shrink: 0; font-size: 10.5px; font-weight: 700; }
+
+.status-error {
+    display: none;
+    margin-top: 14px;
+    padding: 9px 13px;
+    border-radius: 8px;
+    background: #ffeaea;
+    color: var(--red);
+    font-size: 12.5px;
+    text-align: left;
+}
+.status-error.show { display: block; }
+
+.status-actions {
+    display: flex; gap: 12px; justify-content: center;
+    padding: 20px 26px 26px;
+}
+.status-actions .btn { flex: 1; justify-content: center; padding: 10px 16px; }
+.status-btn-keep {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--muted);
+}
+.status-btn-keep:hover:not(:disabled) { border-color: var(--navy); color: var(--navy); background: var(--bg); }
+.status-btn-confirm { background: var(--tone-strong); color: #fff; }
+.status-btn-confirm:hover:not(:disabled) { filter: brightness(1.1); }
+.status-actions .btn:disabled { opacity: .6; cursor: not-allowed; }
+
+/* ══════════════════════════════════════════════════════════
+   BHW TAB — "Account Created" success modal
+   ══════════════════════════════════════════════════════════ */
+.success-modal { max-width: 440px; overflow: hidden; text-align: center; animation: modalPop .18s ease-out; }
+.success-modal-body { padding: 32px 26px 8px; }
+
+.success-check {
+    position: relative;
+    width: 64px; height: 64px;
+    margin: 0 auto 16px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: #e8f8f0;
+    color: #0f766e;
+    font-size: 26px;
+    animation: checkPop .45s cubic-bezier(.2, 1.4, .4, 1) both;
+}
+.success-check::after {           /* single expanding ring, plays once */
+    content: '';
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    border: 2px solid var(--teal);
+    animation: checkRing .7s ease-out .15s both;
+}
+.success-title { font-size: 19px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.success-sub   { font-size: 13.5px; color: var(--muted); margin-bottom: 20px; }
+.success-sub strong { color: var(--text); }
+
+.success-details {
+    text-align: left;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    padding: 4px 16px;
+    margin-bottom: 14px;
+}
+.success-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+}
+.success-row:last-child { border-bottom: none; }
+.success-row dt { font-size: 12.5px; color: var(--muted); flex-shrink: 0; }
+.success-row dd { font-size: 13px; font-weight: 600; color: var(--text); text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.success-row .badge { font-size: 10.5px; font-weight: 700; }
+
+.success-note {
+    display: flex; gap: 10px; align-items: flex-start;
+    text-align: left;
+    background: #e8f8f0;
+    border: 1px solid var(--teal2);
+    border-radius: 8px;
+    padding: 10px 13px;
+    font-size: 12.5px; line-height: 1.5;
+    color: #0f766e;
+}
+.success-note i { margin-top: 2px; }
+.success-note strong { overflow-wrap: anywhere; }
+
+.success-actions {
+    display: flex; gap: 12px; justify-content: flex-end;
+    padding: 20px 26px 24px;
+}
+
+@keyframes modalPop  { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes checkPop  { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes checkRing { from { transform: scale(1); opacity: .7; } to { transform: scale(1.6); opacity: 0; } }
+
+@media (max-width: 480px) {
+    .status-actions, .success-actions { flex-direction: column-reverse; }
+    .success-actions .btn { justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .status-modal, .success-modal, .success-check, .success-check::after { animation: none; }
+}
+
+.sidebar nav {
+  flex: 1;
+  padding: 8px 0;
+  background: #071431;
+  
+  /* SOLUSYON SA SENTRO: Ginagawang lumulutang ang scrollbar sa ibabaw ng content 
+     para HINDI nito itulak o kainin ang space ng mga menu items mo */
+  overflow-y: overlay; 
+  
+  /* Gagawa tayo ng temporary variable para sa kulay ng thumb */
+  --nav-thumb-color: rgba(255, 255, 255, 0); /* Invisible sa simula */
+  
+  /* Smooth fading transition para kapag nileft o pumasok ang mouse */
+  transition: --nav-thumb-color 0.3s ease;
+}
+
+/* AUTO-HIDE CONCEPT: Lilitaw lang ang scrollbar kapag tinapatan (hover) ang sidebar */
+.sidebar:hover nav {
+  --nav-thumb-color: rgba(255, 255, 255, 0.15); /* Babalik sa kulay na gusto mo */
+}
+
+
+/* ─── DOON NAMAN SA CONCEPT CODE MO, ITO ANG PAGBABAGO: ─── */
+
+/* 1. Target ang scrollbar ng nav */
+.sidebar nav::-webkit-scrollbar {
+  width: 6px;               
+}
+
+/* 2. Track styling para sa nav */
+.sidebar nav::-webkit-scrollbar-track {
+  /* Ginawang transparent para habang nakatago ang thumb, walang bakas ng scrollbar track */
+  background: transparent; 
+  border-radius: 10px;       
+}
+
+/* 3. Thumb / Handle styling para sa nav */
+.sidebar nav::-webkit-scrollbar-thumb {
+  /* Inugnay natin sa variable sa itaas para sumunod sa fade-in / auto-hide effect */
+  background: var(--nav-thumb-color); 
+  border-radius: 10px;       
+}
+
+/* 4. Hover state kapag tinapatan mismo ang knob */
+.sidebar nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35) !important; 
 }

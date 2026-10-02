@@ -6,7 +6,11 @@
 # ============================================================
 
 import os
+import math
+import time
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
@@ -14,14 +18,45 @@ from database import get_db
 from models.models import User, AuditLog
 from middleware.auth import (
     get_current_user, log_audit, handle_failed_login,
-    reset_failed_attempts, get_client_info
+    reset_failed_attempts, get_client_info,
+    security, LOCKOUT_DURATION_MIN
 )
 from utils.security import (
     verify_password, hash_password,
-    create_access_token, validate_password_strength
+    create_access_token, decode_access_token,
+    validate_password_strength, ACCESS_TOKEN_EXPIRE_MIN
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+
+# Absolute na maximum na haba ng isang session kahit paulit-ulit ang silent refresh.
+# Default: 12 oras (isang shift). Pagkatapos nito, kailangan nang mag-login ulit.
+MAX_SESSION_HOURS = int(os.getenv("MAX_SESSION_HOURS", "12"))
+
+
+def _issue_token(user: User, auth_time: Optional[int] = None):
+    """
+    Gumawa ng access token para sa user.
+    auth_time = kailan TALAGANG na-verify ang password (login / unlock).
+    Hindi ito nagbabago kapag nag-refresh, kaya may hangganan ang bawat session.
+    Returns (token, expires_in_seconds).
+    """
+    token = create_access_token({
+        "user_id":   user.user_id,
+        "email":     user.email,
+        "role":      user.role,
+        "auth_time": auth_time or int(time.time())
+    })
+    return token, ACCESS_TOKEN_EXPIRE_MIN * 60
+
+
+def _lockout_error(seconds: int, detail: str) -> HTTPException:
+    """423 na may Retry-After header para eksakto ang countdown sa frontend."""
+    return HTTPException(
+        status_code=423,
+        detail=detail,
+        headers={"Retry-After": str(max(1, int(seconds)))}
+    )
 
 
 @router.post("/login")
@@ -49,14 +84,11 @@ async def login(request: Request, db: Session = Depends(get_db)):
         if user.locked_until and datetime.utcnow() > user.locked_until:
             reset_failed_attempts(db, user)
         else:
-            remaining = ""
             if user.locked_until:
-                mins = int((user.locked_until - datetime.utcnow()).total_seconds() // 60)
-                remaining = f" Try again in {mins} minute(s)."
-            raise HTTPException(
-                status_code=423,
-                detail=f"Account is locked.{remaining}"
-            )
+                secs = max(1, math.ceil((user.locked_until - datetime.utcnow()).total_seconds()))
+                mins = math.ceil(secs / 60)
+                raise _lockout_error(secs, f"Account is locked. Try again in {mins} minute(s).")
+            raise HTTPException(status_code=423, detail="Account is locked. Contact administrator.")
 
     if user.status == "inactive":
         raise HTTPException(status_code=403, detail="Account is deactivated. Contact administrator.")
@@ -64,6 +96,8 @@ async def login(request: Request, db: Session = Depends(get_db)):
     # Verify password
     if not verify_password(password, user.password_hash):
         result = handle_failed_login(db, user)
+        if result["locked"]:
+            raise _lockout_error(LOCKOUT_DURATION_MIN * 60, result["message"])
         raise HTTPException(status_code=401, detail=result["message"])
 
     # Successful login
@@ -72,12 +106,7 @@ async def login(request: Request, db: Session = Depends(get_db)):
     db.commit()
 
     # Create JWT token
-    token_data = {
-        "user_id": user.user_id,
-        "email":   user.email,
-        "role":    user.role
-    }
-    access_token = create_access_token(token_data)
+    access_token, expires_in = _issue_token(user)
 
     # Log LOGIN event
     log_audit(
@@ -86,8 +115,6 @@ async def login(request: Request, db: Session = Depends(get_db)):
         ip_address=ip_address,
         user_agent=user_agent
     )
-
-    expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
     return {
         "access_token":  access_token,
@@ -98,7 +125,7 @@ async def login(request: Request, db: Session = Depends(get_db)):
         "email":         user.email,
         "position":      user.position,
         "is_first_login": getattr(user, 'is_first_login', False),
-        "expires_in":    expire_minutes * 60
+        "expires_in":    expires_in
     }
 
 
@@ -113,6 +140,63 @@ async def logout(
     log_audit(db, current_user.user_id, "LOGOUT",
               ip_address=ip_address, user_agent=user_agent)
     return {"message": "Logged out successfully."}
+
+
+@router.post("/refresh")
+async def refresh_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Silent token refresh para sa AKTIBONG user (tinatawag ng session.js).
+    Hindi nito nire-reset ang auth_time, kaya may absolute limit ang session
+    (MAX_SESSION_HOURS) kahit paulit-ulit ang refresh.
+    """
+    payload   = decode_access_token(credentials.credentials) or {}
+    auth_time = int(payload.get("auth_time") or payload.get("iat") or 0)
+
+    if auth_time <= 0 or time.time() - auth_time > MAX_SESSION_HOURS * 3600:
+        raise HTTPException(
+            status_code=401,
+            detail="Session limit reached. Please login again.",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    token, expires_in = _issue_token(current_user, auth_time=auth_time)
+    return {"access_token": token, "token_type": "bearer", "expires_in": expires_in}
+
+
+@router.post("/verify-password")
+async def verify_session_password(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Pang-unlock ng screen lock. Vine-verify ang password ng KASALUKUYANG naka-login
+    na user — hindi na bagong LOGIN (walang ingay sa audit log ng LOGIN).
+    Bilang pa rin ang maling password sa lockout counter (brute-force protection).
+    Kapag tama: nare-reset ang counter at nagbibigay ng bagong token.
+    """
+    body     = await request.json()
+    password = body.get("password", "") if isinstance(body, dict) else ""
+    if not password:
+        raise HTTPException(status_code=400, detail="Password is required.")
+
+    ip_address, user_agent = get_client_info(request)
+
+    if not verify_password(password, current_user.password_hash):
+        result = handle_failed_login(db, current_user)
+        if result["locked"]:
+            raise _lockout_error(LOCKOUT_DURATION_MIN * 60, result["message"])
+        raise HTTPException(status_code=400, detail=result["message"])
+
+    reset_failed_attempts(db, current_user)
+    log_audit(db, current_user.user_id, "SESSION UNLOCK",
+              ip_address=ip_address, user_agent=user_agent)
+
+    token, expires_in = _issue_token(current_user)
+    return {"access_token": token, "token_type": "bearer", "expires_in": expires_in}
 
 
 @router.post("/change-password")
@@ -238,8 +322,7 @@ async def get_my_permissions(current_user: User = Depends(get_current_user)):
     I-return ang permission matrix ng naka-login na user.
     Ginagamit ng frontend para ipakita/itago ang tabs at buttons.
     """
-    from middleware.auth import PERMISSIONS, get_barangay_name
-    from database import get_barangay_name
+    from middleware.auth import PERMISSIONS
     role = current_user.role
     perms = PERMISSIONS.get(role, {})
     return {

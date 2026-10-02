@@ -88,18 +88,6 @@
     </div>
 </div>
 
-<div id="sessionLock">
-    <div class="lock-card">
-        <h2>Session Locked</h2>
-        <p>Your session was locked due to inactivity.<br>Re-enter your password to continue.</p>
-        <input type="password" id="unlockPassword" placeholder="Enter your password"
-            onkeydown="if(event.key==='Enter') unlockSession()">
-        <div id="unlockError">Incorrect password. Please try again.</div>
-        <button class="btn-unlock" onclick="unlockSession()">Unlock Session</button>
-        <button class="lock-switch" onclick="logoutAndGoLogin()">Sign in as a different user</button>
-    </div>
-</div>
-
 <script>
 const API_BASE = window.location.origin;
 const MAX_ATTEMPTS = 5;
@@ -134,6 +122,21 @@ function showAlert(msg) {
 }
 function hideAlert() { document.getElementById('alertBox').classList.remove('show'); }
 
+// Mensahe kapag na-redirect galing sa session.js (?reason=timeout | expired | attempts | locked)
+(function showLogoutReason() {
+    const reason = new URLSearchParams(window.location.search).get('reason');
+    const msgs = {
+        timeout:  'You were logged out due to inactivity.',
+        expired:  'Your session has expired. Please login again.',
+        attempts: 'Too many incorrect password attempts. Please login again.',
+        locked:   'Your account is locked or inactive. Please try again later or contact the administrator.'
+    };
+    if (msgs[reason]) {
+        showAlert(msgs[reason]);
+        history.replaceState(null, '', window.location.pathname);   // para hindi lumabas ulit sa refresh
+    }
+})();
+
 function updateAttempts(failed) {
     const rem = MAX_ATTEMPTS - failed;
     const el  = document.getElementById('attemptsText');
@@ -160,14 +163,27 @@ passwordInput.addEventListener('input', updateSubmitState);
 // Run once on load in case of browser autofill on refresh
 updateSubmitState();
 
-function startLockout(mins) {
+// Kunin ang TOTOONG natitirang oras ng lockout galing sa server (seconds).
+// Return null kung hindi matukoy — mas mabuting walang countdown kaysa maling countdown.
+function getLockoutSeconds(res, data) {
+    const header = parseInt(res.headers.get('Retry-After') || '', 10);   // standard header
+    if (header > 0) return header;
+    if (data && data.retry_after > 0) return Math.ceil(data.retry_after);  // kung ibabalik ng backend
+    const m = /(\d+)\s*minute/i.exec((data && data.detail) || '');       // "Try again in 2 minute(s)."
+    if (m) return parseInt(m[1], 10) * 60;
+    return null;
+}
+
+let lockoutTimer = null;
+function startLockout(totalSecs) {
+    clearInterval(lockoutTimer);                       // iwas dobleng countdown
     document.getElementById('lockoutBox').classList.add('show');
     document.getElementById('attemptsText').classList.remove('show');
     isLockedOut = true;
     updateSubmitState(); // NEW — replaces the old `btn.disabled = true;`
-    let secs = mins * 60;
+    let secs = totalSecs;
     const el = document.getElementById('lockoutCount');
-    const tick = setInterval(() => {
+    const tick = lockoutTimer = setInterval(() => {
         const m = Math.floor(secs / 60), s = secs % 60;
         el.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
         secs--;
@@ -203,17 +219,20 @@ document.getElementById('loginForm').addEventListener('submit', async function (
             sessionStorage.setItem('user_email',     email);
             sessionStorage.setItem('barangay_name',  data.barangay_name || '');
             sessionStorage.setItem('token_expires',  String(Date.now() + data.expires_in * 1000));
-            console.log("LOGIN RESPONSE:", data);
-            console.log("ROLE FROM LOGIN:", data.role);
             // Store first login flag — dashboard will check this and show forced pw change
             sessionStorage.setItem('is_first_login', String(data.is_first_login || false));
+            // Fresh session: burahin ang lumang lock state at i-start ang idle clock
+            sessionStorage.removeItem('session_locked');
+            sessionStorage.setItem('last_activity', String(Date.now()));
             window.location.href = '/frontend/pages/dashboard.html';
         } else if (res.status === 423) {
-            showAlert(data.detail || 'Account is locked.'); startLockout(15);
+            showAlert(data.detail || 'Account is locked.');
+            const lockSecs = getLockoutSeconds(res, data);
+            if (lockSecs) startLockout(lockSecs);
+        } else if (res.status === 429) {
+            showAlert('Too many requests. Please wait a moment and try again.');
         } else {
-            failedCount++;
-            showAlert(data.detail || 'Invalid email or password.');
-            updateAttempts(failedCount);
+            showAlert(data.detail || 'Invalid email or password.');   // kasama na rito ang natitirang attempts galing sa server
         }
     } catch(err) {
         showAlert('Cannot connect to server. Please check your connection.');
@@ -223,55 +242,6 @@ document.getElementById('loginForm').addEventListener('submit', async function (
     }
 });
 
-/* Session lock */
-const SESSION_MS = 30 * 60 * 1000;
-let sessionTimer = null;
-function resetSessionTimer() {
-    clearTimeout(sessionTimer);
-    sessionTimer = setTimeout(lockScreen, SESSION_MS);
-    sessionStorage.setItem('last_activity', String(Date.now()));
-}
-function lockScreen() {
-    if (!sessionStorage.getItem('access_token')) return;
-    document.getElementById('sessionLock').classList.add('show');
-    document.getElementById('unlockPassword').value = '';
-    document.getElementById('unlockError').style.display = 'none';
-    setTimeout(() => document.getElementById('unlockPassword').focus(), 100);
-}
-async function unlockSession() {
-    const pw = document.getElementById('unlockPassword').value;
-    const email = sessionStorage.getItem('user_email') || '';
-    if (!pw) return;
-    try {
-        const res = await fetch(API_BASE + '/api/auth/login', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ email, password: pw })
-        });
-        if (res.ok) {
-            const data = await res.json();
-            sessionStorage.setItem('access_token',   data.access_token);
-            sessionStorage.setItem('token_expires',  String(Date.now() + data.expires_in * 1000));
-            sessionStorage.setItem('is_first_login', String(data.is_first_login || false));
-            document.getElementById('sessionLock').classList.remove('show');
-            document.getElementById('unlockError').style.display = 'none';
-            resetSessionTimer();
-        } else {
-            document.getElementById('unlockPassword').value = '';
-            document.getElementById('unlockError').style.display = 'block';
-        }
-    } catch {
-        document.getElementById('unlockError').style.display = 'block';
-    }
-}
-function logoutAndGoLogin() {
-    sessionStorage.clear();
-    document.getElementById('sessionLock').classList.remove('show');
-}
-['mousemove','keydown','click','touchstart'].forEach(ev =>
-    document.addEventListener(ev, () => {
-        if (sessionStorage.getItem('access_token')) resetSessionTimer();
-    }, { passive: true })
-);
 if (sessionStorage.getItem('access_token')) {
     const exp = parseInt(sessionStorage.getItem('token_expires') || '0');
     if (Date.now() < exp) window.location.href = '/frontend/pages/dashboard.html';

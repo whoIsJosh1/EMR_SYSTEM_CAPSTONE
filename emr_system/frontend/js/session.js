@@ -1,332 +1,383 @@
 /* ============================================================
-   session.js - Session Timeout & Screen Lock Management
-   Awtomatikong naglo-lock ang screen pagkatapos ng inactivity.
-   Kailangan ng user na mag-re-enter ng password para i-unlock.
+   session.js - Session Timeout & Screen Lock Management (v2)
+
+   Mga pagbabago sa v2:
+   - Naka-PERSIST na ang lock state (sessionStorage 'session_locked'),
+     kaya hindi na nababypass ng page refresh / F5.
+   - HINDI na nire-reset ang last_activity sa page load. Kapag lampas
+     na sa timeout habang naka-refresh/naka-sleep ang PC, lock agad.
+   - Timestamp-based na ang idle check (iisang 1s tick) imbes na
+     setTimeout, kaya hindi na naaapektuhan ng browser throttling
+     o sleep/hibernate.
+   - Naayos ang mga ID mismatch sa dashboard.html
+     (unlockPwd, toast-container) at ang unlockSession() na
+     talagang ginagamit na ng Unlock button.
+   - May attempt limit sa unlock, at naka-`inert` ang background
+     habang naka-lock (hindi na matatabbing/ma-type-an sa likod).
+   - Back-button (bfcache) pagkatapos mag-logout: ire-redirect na.
+   - Unlock gamit ang /api/auth/verify-password (hindi na bagong LOGIN),
+     at silent token refresh bawat 10 min habang aktibo ang user.
+   - Auto logout 15 min pagkatapos mag-lock (AUTO_LOGOUT_AFTER_LOCK_MS),
+     naka-redirect sa /?reason=timeout | expired | attempts | locked.
    ============================================================ */
+(function () {
+    'use strict';
 
-// ---- Session configuration ----
-const SESSION_TIMEOUT_MS   = 30 * 60 * 1000;  // 30 minuto ng inactivity
-const WARNING_BEFORE_MS    = 2  * 60 * 1000;  // Magbabala 2 minuto bago mag-lock
-const TIMER_CHECK_INTERVAL = 30 * 1000;        // Suriin bawat 30 segundo
+    // ---- Configuration ----
+    const SESSION_TIMEOUT_MS   = 10 * 60 * 1000;  // 10 minuto ng inactivity
+    const WARNING_BEFORE_MS    = 2  * 60 * 1000;  // Warning 2 minuto bago mag-lock
+    const TICK_MS              = 1000;            // Idle check bawat 1 segundo
+    const ACTIVITY_THROTTLE_MS = 5000;            // Max na pag-save ng activity sa storage
+    const MAX_UNLOCK_ATTEMPTS  = 5;               // Lampas dito = forced logout (dapat < MAX_FAILED_ATTEMPTS ng server, default 5)
+    const AUTO_LOGOUT_AFTER_LOCK_MS = 5 * 60 * 1000; // Auto logout 5 min pagkatapos mag-lock
+    const REFRESH_EVERY_MS     = 10 * 60 * 1000;  // Silent token refresh bawat 10 min (habang aktibo)
+    const REFRESH_RETRY_MS     = 60 * 1000;       // Retry kung pumalya ang refresh
 
-let sessionTimer      = null;  // Main timeout timer
-let warningTimer      = null;  // Warning countdown timer
-let sessionLockActive = false; // True kung naka-lock na ang screen
-let warningShown      = false; // True kung naka-show na ang babala
+    // Storage keys
+    const K = {
+        token:   'access_token',
+        expires: 'token_expires',
+        last:    'last_activity',
+        locked:  'session_locked',
+        email:   'user_email',
+        refreshed: 'token_refreshed_at'
+    };
 
-/**
- * I-reset ang session timer kapag may aktibidad ang user.
- * Tinatawag ng lahat ng user activity events.
- */
-function resetSessionTimer() {
-    // Huwag i-reset kung naka-lock na ang screen
-    if (sessionLockActive) return;
+    let sessionLockActive = false;
+    let lastActivity      = 0;   // in-memory, ito ang binabasa ng tick
+    let lastPersist       = 0;
+    let unlockAttempts    = 0;
+    let lastRefresh       = 0;
+    let refreshing        = false;
+    let refreshDisabled   = false;   // True kapag lampas na sa MAX_SESSION_HOURS ng server
 
-    // I-save ang last activity timestamp
-    sessionStorage.setItem('last_activity', String(Date.now()));
+    const $ = id => document.getElementById(id);
+    const hasToken = () => !!sessionStorage.getItem(K.token);
+    const getNum   = k => parseInt(sessionStorage.getItem(k) || '0', 10) || 0;
+    const toast    = (msg, type, ms) => {
+        if (typeof showToast === 'function') showToast(msg, type, ms);
+    };
 
-    // I-clear ang mga existing timers
-    clearTimeout(sessionTimer);
-    clearTimeout(warningTimer);
-    warningShown = false;
+    /* ---------- Logout helpers ---------- */
 
-    // Itago ang warning kung naka-show na ito
-    hideSessionWarning();
-
-    // Itakda ang bagong warning timer (mag-babala bago mag-lock)
-    warningTimer = setTimeout(showSessionWarning, SESSION_TIMEOUT_MS - WARNING_BEFORE_MS);
-
-    // Itakda ang bagong lock timer
-    sessionTimer = setTimeout(lockScreen, SESSION_TIMEOUT_MS);
-}
-
-/**
- * Magpakita ng warning notification bago mag-lock ang screen.
- * Bibigyan ng chance ang user na i-extend ang kanilang session.
- */
-function showSessionWarning() {
-    if (sessionLockActive || warningShown) return;
-    warningShown = true;
-
-    // Gumawa ng warning toast na may countdown
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
-
-    const warningToast = document.createElement('div');
-    warningToast.id        = 'sessionWarningToast';
-    warningToast.className = 'toast warning';
-    warningToast.style.cssText = 'min-width:320px; cursor:pointer;';
-    warningToast.innerHTML = `
-        <span style="font-size:20px;">⏰</span>
-        <div style="flex:1;">
-            <div style="font-weight:600;margin-bottom:3px;">Session Expiring Soon</div>
-            <div style="font-size:12px;color:var(--text-muted);" id="warningCountdown">
-                Screen will lock in 2:00
-            </div>
-        </div>
-        <button onclick="extendSession()" style="background:var(--accent);color:#fff;border:none;
-            border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;font-weight:600;">
-            Stay Active
-        </button>
-    `;
-
-    container.appendChild(warningToast);
-
-    // Countdown para sa warning
-    let secondsLeft = WARNING_BEFORE_MS / 1000;
-    const countdownEl = document.getElementById('warningCountdown');
-    const countdownInterval = setInterval(() => {
-        secondsLeft--;
-        if (countdownEl) {
-            const mins = Math.floor(secondsLeft / 60);
-            const secs = secondsLeft % 60;
-            countdownEl.textContent = `Screen will lock in ${mins}:${String(secs).padStart(2,'0')}`;
-        }
-        if (secondsLeft <= 0) clearInterval(countdownInterval);
-    }, 1000);
-}
-
-/**
- * Itago ang session warning toast.
- */
-function hideSessionWarning() {
-    const toast = document.getElementById('sessionWarningToast');
-    if (toast) toast.remove();
-}
-
-/**
- * I-extend ang session — tinatawag kapag nag-click ang user sa "Stay Active".
- */
-function extendSession() {
-    hideSessionWarning();
-    resetSessionTimer();
-    showToast('Session extended. You\'re still logged in.', 'success', 2000);
-}
-
-/**
- * I-lock ang screen dahil sa inactivity.
- * Nagpapakita ng lock overlay na nag-re-require ng password.
- */
-function lockScreen() {
-    // Huwag i-lock kung walang session
-    if (!sessionStorage.getItem('access_token')) return;
-
-    sessionLockActive = true;
-    hideSessionWarning();
-
-    // I-clear ang mga timers
-    clearTimeout(sessionTimer);
-    clearTimeout(warningTimer);
-
-    // Ipakita ang lock overlay
-    const lockOverlay = document.getElementById('sessionLock');
-    if (lockOverlay) {
-        lockOverlay.classList.add('show');
-        // I-focus ang password field pagkatapos ng animation
-        setTimeout(() => {
-            const pwField = document.getElementById('unlockPassword');
-            if (pwField) {
-                pwField.value = '';
-                pwField.focus();
+    // Best-effort logout sa server (para may LOGOUT sa audit log), then balik sa login.
+    function forceLogout(reason) {
+        const t = sessionStorage.getItem(K.token);
+        try {
+            if (t) {
+                fetch(`${window.location.origin}/api/auth/logout`, {
+                    method:    'POST',
+                    headers:   { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t },
+                    body:      '{}',
+                    keepalive: true
+                }).catch(() => {});
             }
-        }, 200);
-    }
-
-    // I-log sa console para sa debugging
-    console.log('🔒 Screen locked due to inactivity at', new Date().toLocaleTimeString());
-}
-
-/**
- * I-unlock ang screen pagkatapos ma-verify ang password.
- * Tinatawag ng Unlock button sa lock overlay.
- */
-async function unlockSession() {
-    const pwField = document.getElementById('unlockPassword');
-    const errorEl = document.getElementById('unlockError');
-
-    if (!pwField || !pwField.value) {
-        if (errorEl) {
-            errorEl.textContent = '⚠️ Please enter your password.';
-            errorEl.style.display = 'block';
-        }
-        return;
-    }
-
-    // Kunin ang email ng kasalukuyang user
-    const userEmail = sessionStorage.getItem('user_email');
-    if (!userEmail) {
-        // Walang email, i-redirect sa login
+        } catch (_) {}
         sessionStorage.clear();
-        window.location.href = '/';
-        return;
+        window.location.href = reason ? '/?reason=' + encodeURIComponent(reason) : '/';
     }
 
-    try {
-        // I-verify ang password sa backend
-        const response = await fetch(`${window.location.origin}/api/auth/login`, {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({
-                email:    userEmail,
-                password: pwField.value
-            })
-        });
+    function expireSession() {
+        sessionStorage.clear();
+        toast('Your session has expired. Please login again.', 'warning');
+        setTimeout(() => { window.location.href = '/?reason=expired'; }, 2000);
+    }
 
-        if (response.ok) {
-            const data = await response.json();
+    /* ---------- Activity tracking ---------- */
 
-            // I-update ang token sa sessionStorage
-            sessionStorage.setItem('access_token',  data.access_token);
-            sessionStorage.setItem('token_expires',  String(Date.now() + data.expires_in * 1000));
+    function markActivity(force) {
+        if (sessionLockActive) return;            // walang extension habang naka-lock
+        const now = Date.now();
+        lastActivity = now;
+        if (force || now - lastPersist > ACTIVITY_THROTTLE_MS) {
+            sessionStorage.setItem(K.last, String(now));
+            lastPersist = now;
+        }
+    }
 
-            // Itago ang lock overlay
-            const lockOverlay = document.getElementById('sessionLock');
-            if (lockOverlay) lockOverlay.classList.remove('show');
+    // Compatibility: dating pangalan ng function
+    function resetSessionTimer() { markActivity(true); }
 
-            // I-reset ang mga estado
-            sessionLockActive = false;
-            warningShown      = false;
-            if (errorEl) errorEl.style.display = 'none';
-            if (pwField)  pwField.value         = '';
+    /* ---------- Warning toast ---------- */
 
-            // I-restart ang session timer
-            resetSessionTimer();
+    function showWarning(msLeft) {
+        let toastEl = $('sessionWarningToast');
+        if (!toastEl) {
+            const container = $('toast-container');
+            if (!container) return;
 
-            showToast('Session unlocked. Welcome back!', 'success', 2000);
-        } else {
-            // Mali ang password
-            const data = await response.json();
-            if (errorEl) {
-                errorEl.textContent = '⚠️ ' + (data.detail || 'Incorrect password. Please try again.');
-                errorEl.style.display = 'block';
+            toastEl = document.createElement('div');
+            toastEl.id        = 'sessionWarningToast';
+            toastEl.className = 'toast warning';
+            toastEl.style.cssText = 'min-width:320px;';
+
+            const icon = document.createElement('span');
+            icon.style.fontSize = '20px';
+            icon.textContent = '⏰';
+
+            const body  = document.createElement('div');
+            body.style.flex = '1';
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:600;margin-bottom:3px;';
+            title.textContent = 'Session Expiring Soon';
+            const count = document.createElement('div');
+            count.id = 'warningCountdown';
+            count.style.cssText = 'font-size:12px;color:var(--muted);';
+            body.append(title, count);
+
+            const btn = document.createElement('button');
+            btn.textContent = 'Stay Active';
+            btn.style.cssText = 'background:var(--blue);color:#fff;border:none;border-radius:7px;' +
+                                'padding:6px 12px;font-size:12px;cursor:pointer;font-weight:600;';
+            btn.addEventListener('click', extendSession);
+
+            toastEl.append(icon, body, btn);
+            container.appendChild(toastEl);
+        }
+        const secs = Math.max(0, Math.ceil(msLeft / 1000));
+        const el   = $('warningCountdown');
+        if (el) el.textContent = `Screen will lock in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    }
+
+    function hideWarning() {
+        const el = $('sessionWarningToast');
+        if (el) el.remove();
+    }
+
+    function extendSession() {
+        hideWarning();
+        markActivity(true);
+        toast("Session extended. You're still logged in.", 'success', 2000);
+    }
+
+    /* ---------- Silent token refresh ----------
+       Para hindi ma-logout ang AKTIBONG user sa dulo ng token lifetime (60 min).
+       Nagre-refresh lang kung may activity mula noong huling refresh. Ang server
+       ang may hawak ng absolute limit (MAX_SESSION_HOURS) — pagkatapos nun, 401
+       at hahayaan na lang nating mag-expire ang token. */
+
+    function setRefreshed(ts) {
+        lastRefresh = ts;
+        sessionStorage.setItem(K.refreshed, String(ts));
+    }
+
+    async function refreshToken() {
+        const t = sessionStorage.getItem(K.token);
+        if (!t || refreshing) return;
+        refreshing = true;
+        try {
+            const res = await fetch(`${window.location.origin}/api/auth/refresh`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t },
+                body:    '{}'
+            });
+            if (res.ok) {
+                const d = await res.json();
+                // hasToken(): kung nag-logout habang naghihintay, huwag ibalik ang token
+                if (d.access_token && hasToken()) {
+                    sessionStorage.setItem(K.token,   d.access_token);
+                    sessionStorage.setItem(K.expires, String(Date.now() + d.expires_in * 1000));
+                }
+                setRefreshed(Date.now());
+            } else if (res.status === 401) {
+                refreshDisabled = true;      // session limit na — hayaang mag-expire
+            } else {
+                setRefreshed(Date.now() - REFRESH_EVERY_MS + REFRESH_RETRY_MS);
             }
-            if (pwField) {
+        } catch (_) {
+            setRefreshed(Date.now() - REFRESH_EVERY_MS + REFRESH_RETRY_MS);
+        } finally {
+            refreshing = false;
+        }
+    }
+
+    /* ---------- Lock / Unlock ---------- */
+
+    // I-disable ang interaction sa lahat ng nasa likod ng lock overlay.
+    function setBackgroundInert(on) {
+        Array.from(document.body.children).forEach(el => {
+            if (el.id === 'sessionLock' || el.id === 'toast-container') return;
+            if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') return;
+            if (on) el.setAttribute('inert', ''); else el.removeAttribute('inert');
+        });
+    }
+
+    function lockScreen() {
+        if (!hasToken()) return;                       // walang session, walang ila-lock
+
+        sessionLockActive = true;
+        sessionStorage.setItem(K.locked, '1');         // <-- PERSIST: survive ang refresh
+        hideWarning();
+        setBackgroundInert(true);
+
+        const overlay = $('sessionLock');
+        if (overlay) {
+            overlay.classList.add('show');
+            setTimeout(() => {
+                const pw = $('unlockPwd');
+                if (pw) { pw.value = ''; pw.focus(); }
+            }, 200);
+        }
+    }
+
+    function showUnlockError(msg) {
+        const el = $('unlockError');
+        if (!el) return;
+        el.textContent = '⚠️ ' + msg;
+        el.style.display = 'block';
+    }
+
+    async function unlockSession() {
+        const pwField = $('unlockPwd');
+        const btn     = document.querySelector('.btn-unlock');
+
+        if (!pwField || !pwField.value) { showUnlockError('Please enter your password.'); return; }
+
+        const tok = sessionStorage.getItem(K.token);
+        if (!tok) { forceLogout('expired'); return; }
+
+        if (btn) btn.disabled = true;                  // iwas double-submit
+        try {
+            // Vine-verify ang password ng KASALUKUYANG user (hindi bagong login)
+            const res = await fetch(`${window.location.origin}/api/auth/verify-password`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+                body:    JSON.stringify({ password: pwField.value })
+            });
+            let data = {};
+            try { data = await res.json(); } catch (_) {}
+
+            if (res.ok) {
+                if (data.access_token) {
+                    sessionStorage.setItem(K.token,   data.access_token);
+                    sessionStorage.setItem(K.expires, String(Date.now() + data.expires_in * 1000));
+                }
+                sessionStorage.removeItem(K.locked);
+
+                sessionLockActive = false;
+                unlockAttempts    = 0;
+                refreshDisabled   = false;
+                setRefreshed(Date.now());
+                setBackgroundInert(false);
+
+                const overlay = $('sessionLock');
+                if (overlay) overlay.classList.remove('show');
+                const errEl = $('unlockError');
+                if (errEl) errEl.style.display = 'none';
+                pwField.value = '';
+
+                markActivity(true);                    // bagong idle window
+                toast('Session unlocked. Welcome back!', 'success', 2000);
+            } else if (res.status === 423 || res.status === 403) {
+                forceLogout('locked');                 // naka-lock / deactivated na ang account sa server
+                return;
+            } else if (res.status === 401) {
+                forceLogout('expired');                // expired na ang token habang naka-lock
+                return;
+            } else if (res.status === 429) {
+                showUnlockError('Too many requests. Please wait a moment and try again.');
+            } else {
+                unlockAttempts++;
+                if (unlockAttempts >= MAX_UNLOCK_ATTEMPTS) { forceLogout('attempts'); return; }
+
+                const detail = (typeof data.detail === 'string') ? data.detail : '';
+                showUnlockError(detail || 'Incorrect password. Please try again.');
                 pwField.value = '';
                 pwField.focus();
-            }
 
-            // Shake animation para sa feedback
-            const lockCard = document.querySelector('.lock-card');
-            if (lockCard) {
-                lockCard.style.animation = 'none';
-                lockCard.offsetHeight;
-                lockCard.style.animation = 'lockShake 0.4s ease';
+                const card = document.querySelector('.lock-card');
+                if (card) {
+                    card.style.animation = 'none';
+                    void card.offsetHeight;
+                    card.style.animation = 'lockShake 0.4s ease';
+                }
             }
-        }
-    } catch (error) {
-        if (errorEl) {
-            errorEl.textContent = '⚠️ Cannot connect to server. Please try again.';
-            errorEl.style.display = 'block';
+        } catch (_) {
+            showUnlockError('Cannot connect to server. Please try again.');
+        } finally {
+            if (btn) btn.disabled = false;
         }
     }
-}
 
-/**
- * Mag-logout at i-redirect sa login page.
- * Tinatawag ng "Sign in as different user" link sa lock overlay.
- */
-function logoutFromLock() {
-    sessionStorage.clear();
-    clearTimeout(sessionTimer);
-    clearTimeout(warningTimer);
-    window.location.href = '/';
-}
+    /* ---------- Main tick (timestamp-based) ---------- */
 
-/* ============================================================
-   USER ACTIVITY MONITORING
-   I-track ang lahat ng user interactions para i-reset ang timer
-   ============================================================ */
+    function sessionTick() {
+        if (!hasToken()) return;
 
-// Listahan ng events na nagpapakita ng user activity
-const ACTIVITY_EVENTS = [
-    'mousemove', 'mousedown', 'keydown',
-    'touchstart', 'touchmove', 'scroll', 'click'
-];
-
-// I-attach ang event listeners para sa activity monitoring
-ACTIVITY_EVENTS.forEach(eventName => {
-    document.addEventListener(eventName, () => {
-        // Huwag i-reset kung naka-lock na
-        if (!sessionLockActive && sessionStorage.getItem('access_token')) {
-            // Throttle ang reset — huwag mag-reset kung bago lang na-reset
-            const lastReset = parseInt(sessionStorage.getItem('last_timer_reset') || '0');
-            if (Date.now() - lastReset > 10000) { // Reset lang bawat 10 segundo minimum
-                sessionStorage.setItem('last_timer_reset', String(Date.now()));
-                resetSessionTimer();
+        // Naka-lock na: kung lampas na sa grace period, auto logout.
+        // (Hindi nag-a-update ang lastActivity habang naka-lock, kaya tuloy ang bilang.)
+        if (sessionLockActive) {
+            if (Date.now() - lastActivity >= SESSION_TIMEOUT_MS + AUTO_LOGOUT_AFTER_LOCK_MS) {
+                forceLogout('timeout');
             }
-        }
-    }, { passive: true });
-});
-
-/* ============================================================
-   VISIBILITY CHANGE HANDLING
-   Mag-check ng session status kapag nag-balik ang user sa tab
-   ============================================================ */
-
-document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'visible') {
-        // Kapag nag-balik ang user sa tab, suriin kung expired na ang token
-        const tokenExpires = parseInt(sessionStorage.getItem('token_expires') || '0');
-        if (!sessionStorage.getItem('access_token') || Date.now() > tokenExpires) {
-            // Expired na ang token, i-redirect sa login
-            sessionStorage.clear();
-            window.location.href = '/';
             return;
         }
 
-        // Suriin kung kailangan na mag-lock dahil sa inactivity
-        const lastActivity = parseInt(sessionStorage.getItem('last_activity') || '0');
-        const timeSinceActivity = Date.now() - lastActivity;
+        const now = Date.now();
 
-        if (lastActivity > 0 && timeSinceActivity > SESSION_TIMEOUT_MS) {
-            // Matagal nang idle, i-lock agad ang screen
-            lockScreen();
-        } else {
-            // I-reset ang timer
-            resetSessionTimer();
+        // 1) Token expiry (kung walang token_expires, ituturing na expired - same sa dati)
+        if (now > getNum(K.expires)) { expireSession(); return; }
+
+        // 2) Inactivity
+        const idle = now - lastActivity;
+        if (idle >= SESSION_TIMEOUT_MS) { lockScreen(); return; }
+
+        if (idle >= SESSION_TIMEOUT_MS - WARNING_BEFORE_MS) showWarning(SESSION_TIMEOUT_MS - idle);
+        else hideWarning();
+
+        // 3) Silent refresh: may activity mula noong huling refresh at lampas na sa 10 min
+        if (!refreshing && !refreshDisabled &&
+            now - lastRefresh >= REFRESH_EVERY_MS && lastActivity > lastRefresh) {
+            refreshToken();
         }
     }
-});
 
-/* ============================================================
-   TOKEN EXPIRY CHECKER
-   Periodically sinusuri kung valid pa ang token
-   ============================================================ */
+    /* ---------- Event wiring ---------- */
 
-setInterval(() => {
-    if (sessionLockActive) return;
+    ['mousemove', 'mousedown', 'keydown', 'touchstart', 'touchmove', 'scroll', 'click', 'wheel']
+        .forEach(ev => document.addEventListener(ev, () => markActivity(false),
+                                                 { passive: true, capture: true }));
 
-    const tokenExpires = parseInt(sessionStorage.getItem('token_expires') || '0');
-    if (sessionStorage.getItem('access_token') && Date.now() > tokenExpires) {
-        // Expired na ang token
-        sessionStorage.clear();
-        showToast('Your session has expired. Please login again.', 'warning');
-        setTimeout(() => window.location.href = '/', 2000);
+    // Pagbalik sa tab / paggising ng PC: i-check agad, huwag hintayin ang susunod na tick
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') sessionTick();
+    });
+
+    // Back button pagkatapos mag-logout (bfcache): huwag ipakita ang lumang dashboard
+    window.addEventListener('pageshow', e => {
+        if (e.persisted) {
+            if (!hasToken()) { window.location.replace('/'); return; }
+            sessionTick();
+        }
+    });
+
+    /* ---------- Init ---------- */
+
+    // Email para sa unlock verification
+    const cu = (typeof getCurrentUser === 'function') ? getCurrentUser() : null;
+    if (cu && cu.email) {
+        sessionStorage.setItem(K.email, cu.email);
+    } else if (typeof apiGet === 'function') {
+        apiGet('/api/auth/me').then(u => { if (u) sessionStorage.setItem(K.email, u.email); }).catch(() => {});
     }
-}, TIMER_CHECK_INTERVAL);
 
-/* ============================================================
-   INITIALIZATION
-   I-start ang session management sa page load
-   ============================================================ */
+    // IMPORTANTE: i-restore ang last_activity — HUWAG i-reset sa page load.
+    const saved = getNum(K.last);
+    lastActivity = saved || Date.now();
+    lastPersist  = lastActivity;
+    if (!saved) sessionStorage.setItem(K.last, String(lastActivity));
 
-// I-save ang email ng user para sa unlock verification
-const currentUserForSession = getCurrentUser();
-if (currentUserForSession && currentUserForSession.email) {
-    sessionStorage.setItem('user_email', currentUserForSession.email);
-} else {
-    // Kunin ang email mula sa API kung wala pa
-    apiGet('/api/auth/me').then(user => {
-        if (user) sessionStorage.setItem('user_email', user.email);
-    }).catch(() => {});
-}
+    lastRefresh = getNum(K.refreshed) || Date.now();     // walang tala = kaka-login lang
+    sessionStorage.setItem(K.refreshed, String(lastRefresh));
 
-// I-start ang session timer
-resetSessionTimer();
+    if (sessionStorage.getItem(K.locked) === '1') { lockScreen(); sessionTick(); } // naka-lock bago mag-refresh; lampas na ba sa auto logout?
+    else sessionTick();                                                           // lampas na ba sa timeout?
 
-// CSS animation para sa lock card shake effect
-const lockShakeStyle = document.createElement('style');
-lockShakeStyle.textContent = `
+    setInterval(sessionTick, TICK_MS);
+
+    // Shake animation
+    const style = document.createElement('style');
+    style.textContent = `
 @keyframes lockShake {
     0%,100% { transform: translateX(0); }
     20%     { transform: translateX(-8px); }
@@ -334,14 +385,13 @@ lockShakeStyle.textContent = `
     60%     { transform: translateX(-5px); }
     80%     { transform: translateX(5px); }
 }`;
-document.head.appendChild(lockShakeStyle);
+    document.head.appendChild(style);
 
-// Enter key sa unlock password field
-document.addEventListener('DOMContentLoaded', function() {
-    const unlockPwField = document.getElementById('unlockPassword');
-    if (unlockPwField) {
-        unlockPwField.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') unlockSession();
-        });
-    }
-});
+    // Public API (ginagamit ng HTML onclick / ibang scripts)
+    window.lockScreen         = lockScreen;
+    window.unlockSession      = unlockSession;
+    window.extendSession      = extendSession;
+    window.resetSessionTimer  = resetSessionTimer;
+    window.logoutFromLock     = () => forceLogout();
+    window.isSessionLocked    = () => sessionLockActive;
+})();

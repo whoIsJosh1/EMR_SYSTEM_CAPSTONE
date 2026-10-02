@@ -5,6 +5,7 @@
 # ============================================================
 
 import os
+import html
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -27,6 +28,10 @@ SMTP_USER     = "661b70cd21e5f4"          # Iyong Mailtrap Username
 SMTP_PASSWORD = "5a2d5a161a7310"          # Iyong Mailtrap Password
 EMAIL_FROM    = "emr-system@vientereales.gov.ph"
 
+# Optional: link ng login page. Ilagay sa .env, hal. APP_LOGIN_URL=http://localhost:8000/
+# Kapag walang laman, hindi lalabas ang "Mag-login Ngayon" button sa email.
+APP_LOGIN_URL = os.getenv("APP_LOGIN_URL", "")
+
 async def send_temporary_password_email(email: str, name: str, role: str, temp_password: str):
     """
     Sends an email to the newly registered healthcare worker containing their 
@@ -43,6 +48,23 @@ async def send_temporary_password_email(email: str, name: str, role: str, temp_p
         USE_CREDENTIALS=True,
         VALIDATE_CERTS=True
     )
+
+    # I-escape ang lahat ng galing sa labas para hindi masira ang HTML
+    # (hal. kapag may "&" o "<" ang temporary password, ito ang laging lalabas nang tama).
+    safe_name     = html.escape(name)
+    safe_email    = html.escape(email)
+    safe_role     = html.escape(role)
+    safe_password = html.escape(temp_password)
+
+    login_button = ""
+    if APP_LOGIN_URL:
+        login_button = (
+            '<div style="text-align:center;margin:26px 0 4px">'
+            f'<a href="{html.escape(APP_LOGIN_URL, quote=True)}" '
+            'style="display:inline-block;background:#0d2272;color:#ffffff;text-decoration:none;'
+            'font-weight:700;font-size:15px;padding:13px 32px;border-radius:8px">'
+            'Mag-login Ngayon</a></div>'
+        )
 
     html_content = f"""
     <!DOCTYPE html>
@@ -67,8 +89,12 @@ async def send_temporary_password_email(email: str, name: str, role: str, temp_p
             .cred-row:last-child {{ margin-bottom: 0; }}
             .cred-label {{ color: #475569; font-weight: 600; display: inline-block; width: 150px; }}
             .cred-value {{ color: #0f172a; font-family: monospace; font-size: 15px; }}
-            .password-highlight {{ background-color: #f1f5f9; border: 1px dashed #cbd5e1; color: #dc2626; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 16px; letter-spacing: 0.5px; }}
+            .password-highlight {{ background-color: #f1f5f9; border: 1px dashed #cbd5e1; color: #dc2626; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 16px; letter-spacing: 0.5px; display: inline-block; transition: all 0.2s ease; -webkit-user-select:all;user-select:all;cursor:text; }}
             .role-badge {{ display: inline-block; background-color: #e0f2fe; color: #0369a1; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 50px; text-transform: uppercase; letter-spacing: 0.5px; }}
+            .pw-card {{ margin: 0 0 8px; }}
+            .pw-title {{ font-size: 13px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 10px; }}
+            .pw-hint {{ font-size: 12.5px; color: #64748b; margin: 10px 0 0; line-height: 1.5; }}
+            .steps {{ font-size: 14px; color: #475569; margin: 22px 0 0; padding-left: 20px; line-height: 1.6; }}
             .notice-box {{ background-color: #fffbec; border: 1px solid #ffe0b2; border-radius: 8px; padding: 15px 20px; margin-top: 30px; }}
             .notice-text {{ color: #b7791f; font-size: 13px; margin: 0; font-weight: 500; }}
             .strong-text {{ display: inline-block; margin-bottom: 4px; }}
@@ -87,7 +113,7 @@ async def send_temporary_password_email(email: str, name: str, role: str, temp_p
                 
                 <!-- Main Body Content -->
                 <div class="content">
-                    <p class="welcome-text">Mabuhay, <strong>{name}</strong>!</p>
+                    <p class="welcome-text">Mabuhay, <strong>{safe_name}</strong>!</p>
                     <p class="intro-p">Matagumpay na nairerehistro ng System Administrator ang iyong account bilang isang opisyal na kawani sa ating tanggapan. Maaari mo nang gamitin ang mga sumusunod na temporary credentials para sa iyong paunang login:</p>
                     
                     <!-- Secured Credentials Grid Box -->
@@ -95,18 +121,34 @@ async def send_temporary_password_email(email: str, name: str, role: str, temp_p
                         <p class="cred-title">Account Access Information</p>
                         <div class="cred-row">
                             <span class="cred-label">Assigned Role:</span>
-                            <span class="role-badge">{role}</span>
+                            <span class="role-badge">{safe_role}</span>
                         </div>
                         <div class="cred-row">
                             <span class="cred-label">Email Address:</span>
-                            <span class="cred-value"><strong>{email}</strong></span>
+                            <span class="cred-value"><strong>{safe_email}</strong></span>
                         </div>
                         <div class="cred-row">
                             <span class="cred-label">Temp Password:</span>
-                            <span><code class="password-highlight">{temp_password}</code></span>
+                            <span>
+                                <code class="password-highlight" 
+                                      id="tempPasswordCode"
+                                      onclick="copyToClipboard('{safe_password}')" 
+                                      style="cursor: pointer;" 
+                                      title="Click to copy">
+                                    {safe_password}
+                                </code>
+                            </span>
                         </div>
                     </div>
-                    
+                    <p class="pw-hint"><strong>Paano kopyahin:</strong> i-<strong>triple-click</strong> ang password (o <strong>i-long-press</strong> sa phone) para mapili ang buo, tapos piliin ang <strong>Copy</strong>. I-paste ito sa "Temporary Password" field sa unang login.</p>
+
+                    {login_button}
+
+                    <ol class="steps">
+                        <li>Buksan ang EMR System at ilagay ang iyong email at ang temporary password sa itaas.</li>
+                        <li>Magtakda ng sarili at bagong password kapag hiningi ng system.</li>
+                    </ol>
+
                     <!-- Compliance and Security Warnings -->
                     <div class="notice-box">
                         <div class="notice-text">
