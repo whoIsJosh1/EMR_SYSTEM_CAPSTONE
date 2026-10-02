@@ -256,26 +256,42 @@ async def monthly_cases(
 @router.get("/age-distribution")
 async def age_distribution(
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    year: Optional[int] = Query(None)
 ):
-    """Distribusyon ng edad ng mga pasyente para sa bar chart."""
+    """
+    Distribusyon ng edad ng mga pasyente na may medical record sa napiling taon.
+    Edad = edad nila hanggang Dec 31 ng taong iyon (o hanggang ngayon kung current year).
+    """
+    y   = year or date.today().year
+    ref = pd.Timestamp(min(date(y, 12, 31), date.today()))
+
+    # Mga patient_id na may kahit isang medical record sa taong iyon (distinct na)
+    patient_ids = db.query(MedicalRecord.patient_id).filter(
+        extract('year', MedicalRecord.created_at) == y     # TODO: palitan kung iba ang pangalan ng column
+    ).distinct()
+
     rows = db.query(Patient.birthdate, Patient.sex).filter(
-        Patient.is_archived == False
+        Patient.is_archived == False,
+        Patient.patient_id.in_(patient_ids)                   # TODO: palitan kung iba ang PK ng Patient
     ).all()
 
     if not rows:
         return {"labels": [], "male": [], "female": []}
 
-    df    = pd.DataFrame(rows, columns=['birthdate','sex'])
-    today = pd.Timestamp.now()
-    df['age'] = (today - pd.to_datetime(df['birthdate'])).dt.days // 365
+    df = pd.DataFrame(rows, columns=['birthdate', 'sex'])
+    bd = pd.to_datetime(df['birthdate'])
 
-    bins   = [0, 4, 12, 17, 35, 59, 150]
-    labels = ['0-4','5-12','13-17','18-35','36-59','60+']
+    # Eksaktong edad as of `ref` (hindi days // 365)
+    had_birthday = (bd.dt.month < ref.month) | ((bd.dt.month == ref.month) & (bd.dt.day <= ref.day))
+    df['age'] = ref.year - bd.dt.year - (~had_birthday).astype(int)
+
+    bins   = [-1, 4, 12, 17, 35, 59, 150]    # -1 para kasama ang edad 0
+    labels = ['0-4', '5-12', '13-17', '18-35', '36-59', '60+']
     df['age_group'] = pd.cut(df['age'], bins=bins, labels=labels, right=True)
 
-    male   = df[df['sex']=='Male'].groupby('age_group', observed=True).size()
-    female = df[df['sex']=='Female'].groupby('age_group', observed=True).size()
+    male   = df[df['sex'] == 'Male'].groupby('age_group', observed=True).size()
+    female = df[df['sex'] == 'Female'].groupby('age_group', observed=True).size()
 
     return {
         "labels": labels,

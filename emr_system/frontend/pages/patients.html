@@ -2421,7 +2421,7 @@ async function loadPermissions() {
     _roleConfig = ROLE_CONFIG[role] || ROLE_CONFIG.bhw;
 
     // Role badge in topbar
-    const badge  = document.getElementById('roleBadge');
+    const badge  = document.getElementById('dashRoleBadge');
     const labels = { admin:'Administrator', bhw:'BHW', midwife:'Midwife', doctor:'Doctor', nurse:'Nurse' };
     const colors = { admin:'#0b1f4b', bhw:'#2255c4', midwife:'#2255c4', doctor:'#2255c4',nurse:'#2255c4' };
     if (badge) {

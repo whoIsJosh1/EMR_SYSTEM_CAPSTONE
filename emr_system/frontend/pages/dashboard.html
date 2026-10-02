@@ -126,12 +126,18 @@
         <div class="stat-card pink"><div class="stat-icon"><i class="fa-solid fa-venus"></i></div><div class="stat-value" id="st-female">—</div><div class="stat-label">Female Patients</div></div>
         <div class="stat-card purple admin-only"><div class="stat-icon"><i class="fa-solid fa-user-gear"></i></div><div class="stat-value" id="st-bhw">—</div><div class="stat-label">Active BHW</div></div>
     </div>
-
+    <!-- Dashboard charts: year filter on the top-right, then the 4 chart cards -->
+    <div class="dash-toolbar">
+        <div class="dr-field dr-year">
+            <i class="fa-regular fa-calendar dr-icon"></i>
+            <input type="text" class="dr-input" id="dashYearFilter" aria-label="Select year" readonly>
+        </div>
+    </div>
     <div class="grid-2">
         <div class="card">
             <div class="card-header">
                 <div class="card-title">Monthly Disease Trends</div>
-                <select class="year-sel" id="dashYearFilter" onchange="loadTrendChart()"></select>
+                
             </div>
             <div class="card-body">
                 <div style="height:240px;position:relative"><canvas id="trendChart"></canvas></div>
@@ -395,7 +401,10 @@
                     <div class="card-title">Disease Trends Report</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px">
-                    <select id="rptYear" class="year-sel"></select>
+                    <div class="dr-field dr-year">
+                        <i class="fa-regular fa-calendar dr-icon"></i>
+                        <input type="text" class="dr-input" id="rptYear" aria-label="Select year" readonly>
+                    </div>
                     <button class="btn btn-sm" style="background:var(--red);color:#fff" onclick="dlReport('disease-trends')">Download PDF</button>
                 </div>
             </div>
@@ -836,20 +845,32 @@ function tick() {
 }
 tick(); setInterval(tick, 60000);
 
-// Year dropdown fill
+// Year picker — same Datepicker engine & popup styling as the date-range filters,
+// but locked to the year view (pickLevel: 2). The input's .value is the year, e.g. "2026".
 const CUR_YEAR = new Date().getFullYear();
-function fillYearSelect(id) {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    sel.innerHTML = '';
-    for (let y = CUR_YEAR; y >= CUR_YEAR - 4; y--) {
-        const o = document.createElement('option');
-        o.value = y; o.textContent = y;
-        if (y === CUR_YEAR) o.selected = true;
-        sel.appendChild(o);
-    }
+function initYearPicker(id, onChange, extraOpts = {}) {
+    const input = document.getElementById(id);
+    if (!input || typeof Datepicker === 'undefined') return null;
+
+    const picker = new Datepicker(input, {
+        format: 'yyyy',
+        pickLevel: 2,                               // pick a year only
+        startView: 2,                               // open straight on the year grid
+        autohide: true,
+        minDate: new Date(CUR_YEAR - 4, 0, 1),     // same 5-year window as before
+        maxDate: new Date(CUR_YEAR, 11, 31),
+        prevArrow: '<i class="fa-solid fa-chevron-left"></i>',
+        nextArrow: '<i class="fa-solid fa-chevron-right"></i>',
+        ...extraOpts
+    });
+    picker.setDate(new Date(CUR_YEAR, 0, 1));
+
+    if (onChange) input.addEventListener('changeDate', onChange);
+    return picker;
 }
-['dashYearFilter','rptYear'].forEach(fillYearSelect);
+// Dashboard year picker: popup opens under the input, right edges aligned (picker sits at the top-right)
+const dashYearPicker = initYearPicker('dashYearFilter', onDashYearChange, { orientation: 'bottom right' });
+const rptYearPicker  = initYearPicker('rptYear');
 
 /* ── Analytics date-range filter ── */
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -900,7 +921,7 @@ function initSurvDateRange() {
     const jan1  = new Date(today.getFullYear(), 0, 1);
 
     survRangePicker = new DateRangePicker(rangeEl, {
-        format: 'mm-dd-yyyy',
+        format: 'yyyy-mm-dd',
         autohide: true,
         todayHighlight: true,
         maxDate: today,
@@ -1031,8 +1052,29 @@ window.addEventListener('popstate', (event) => {
 let charts = {};
 function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
 
-/* ── DASHBOARD ── */
+/* ============================================================
+   DASHBOARD TAB — stats + charts
+   Everything in this block belongs to the Dashboard tab only.
+   Surveillance / Analytics / Reports have their own loaders and
+   their own pickers, so changing the year here never touches them.
+   ============================================================ */
+
+// Year currently selected in the Dashboard year picker (falls back to the current year)
+function getDashYear() {
+    const y = parseInt(document.getElementById('dashYearFilter')?.value, 10);
+    return Number.isInteger(y) ? y : CUR_YEAR;
+}
+
+// Fired by the picker when the user chooses a year -> only the 4 charts reload
+function onDashYearChange() { loadDashboardCharts(); }
+
+// Full dashboard refresh (page open, tab switch, websocket events)
 async function loadDashboard() {
+    await Promise.all([loadDashboardStats(), loadDashboardCharts()]);
+}
+
+/* ── Stat cards (not affected by the year picker) ── */
+async function loadDashboardStats() {
     try {
         const s = await apiGet('/api/analytics/dashboard-summary');
         if (!s) return;
@@ -1057,8 +1099,6 @@ async function loadDashboard() {
         animCount('st-cases',    s.cases_this_month);
         animCount('st-female',   s.total_female_patients);
         animCount('st-bhw',      s.active_bhw);
-
-        await Promise.all([loadTrendChart(), loadTopChart(), loadMonthlyChart(), loadAgeChart()]);
     } catch (e) { showToast('Error loading dashboard.', 'error'); }
 }
 
@@ -1076,116 +1116,161 @@ function animCount(id, target) {
 
 Chart.register(ChartDataLabels);
 
-async function loadTrendChart() {
-    const year = document.getElementById('dashYearFilter')?.value || CUR_YEAR;
+/* ── The 4 year-driven charts ── */
+let dashChartsReq = 0;   // request counter: lets us ignore slow responses from an older year
+
+async function loadDashboardCharts() {
+    const year  = getDashYear();
+    const req   = ++dashChartsReq;
+    const stale = () => req !== dashChartsReq;   // true if the user already picked another year
+
+    const results = await Promise.allSettled([
+        loadTrendChart(year, stale),
+        loadTopChart(year, stale),
+        loadMonthlyChart(year, stale),
+        loadAgeChart(year, stale)
+    ]);
+    if (!stale() && results.some(r => r.status === 'rejected')) {
+        showToast('Error loading dashboard charts.', 'error');
+    }
+}
+
+// Sum every number inside nested arrays (used to detect "no data for this year")
+function dashSum(arr) { return arr.flat(2).reduce((a, b) => a + (Number(b) || 0), 0); }
+
+// Show / hide the "No data" message on top of a chart's canvas
+function setDashChartEmpty(canvasId, empty, year) {
+    const wrap = document.getElementById(canvasId)?.parentElement;
+    if (!wrap) return;
+    let el = wrap.querySelector('.chart-empty');
+    if (!empty) { el?.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.className = 'chart-empty'; wrap.appendChild(el); }
+    el.textContent = `No data for ${year}`;
+}
+
+// Common wrapper: handles stale responses + empty state, then calls draw() only when there's data
+function dashDraw({ key, canvasId, year, stale, data, hasData, draw }) {
+    if (stale() || !data) return;                    // old year's response, or request failed
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+    destroyChart(key);                               // always clear the previous year's chart
+    if (!hasData) { setDashChartEmpty(canvasId, true, year); return; }
+    setDashChartEmpty(canvasId, false, year);
+    charts[key] = draw(ctx);
+}
+
+async function loadTrendChart(year = getDashYear(), stale = () => false) {
     const data = await apiGet(`/api/analytics/disease-trends?year=${year}`);
-    const ctx  = document.getElementById('trendChart');
-    if (!ctx || !data) return;
-    destroyChart('trend');
-    charts['trend'] = new Chart(ctx, {
-        type: 'line',
-        data: { labels: data.labels, datasets: data.datasets },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: {
-                legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 }, padding: 8 } },
-                datalabels: { display: false }
-            },
-            scales: {
-                x: { grid: { display: false }, ticks: { font: { size: 9 } } },
-                y: { beginAtZero: true, ticks: { font: { size: 9 }, stepSize: 1 } }
+    dashDraw({
+        key: 'trend', canvasId: 'trendChart', year, stale, data,
+        hasData: !!data && dashSum((data.datasets || []).map(d => d.data)) > 0,
+        draw: ctx => new Chart(ctx, {
+            type: 'line',
+            data: { labels: data.labels, datasets: data.datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 }, padding: 8 } },
+                    datalabels: { display: false }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 9 } } },
+                    y: { beginAtZero: true, ticks: { font: { size: 9 }, stepSize: 1 } }
+                }
             }
-        }
+        })
     });
 }
 
-async function loadTopChart() {
-    const data = await apiGet(`/api/analytics/top-diseases?limit=6&year=${CUR_YEAR}`);
-    const ctx  = document.getElementById('topChart');
-    if (!ctx || !data || !data.labels.length) return;
-    destroyChart('top');
-
-    const total = data.data.reduce((a,b) => a+b, 0);
-    charts['top'] = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: data.labels,
-            datasets: [{ data: data.data, backgroundColor: data.backgroundColor, borderWidth: 2 }]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false, cutout: '58%',
-            plugins: {
-                legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10 }, padding: 8 } },
-                datalabels: {
-                    color: '#fff',
-                    font: { size: 10, weight: 'bold' },
-                    formatter: (val) => val > 0 ? val : ''
+async function loadTopChart(year = getDashYear(), stale = () => false) {
+    const data = await apiGet(`/api/analytics/top-diseases?limit=6&year=${year}`);
+    dashDraw({
+        key: 'top', canvasId: 'topChart', year, stale, data,
+        hasData: !!data && (data.labels || []).length > 0 && dashSum([data.data]) > 0,
+        draw: ctx => new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: data.labels,
+                datasets: [{ data: data.data, backgroundColor: data.backgroundColor, borderWidth: 2 }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, cutout: '58%',
+                plugins: {
+                    legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10 }, padding: 8 } },
+                    datalabels: {
+                        color: '#fff',
+                        font: { size: 10, weight: 'bold' },
+                        formatter: (val) => val > 0 ? val : ''
+                    }
                 }
             }
-        }
+        })
     });
 }
 
-async function loadMonthlyChart() {
-    const data = await apiGet(`/api/analytics/monthly-cases?year=${CUR_YEAR}`);
-    const ctx  = document.getElementById('monthlyChart');
-    if (!ctx || !data) return;
-    destroyChart('monthly');
-    charts['monthly'] = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: data.labels,
-            datasets: [{ label: 'Cases', data: data.data, backgroundColor: '#1a6fad99', borderColor: '#1a6fad', borderWidth: 1, borderRadius: 5 }]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                datalabels: {
-                    anchor: 'end', align: 'top',
-                    font: { size: 9, weight: 'bold' },
-                    color: '#0b1f4b',
-                    formatter: v => v > 0 ? v : ''
-                }
+async function loadMonthlyChart(year = getDashYear(), stale = () => false) {
+    const data = await apiGet(`/api/analytics/monthly-cases?year=${year}`);
+    dashDraw({
+        key: 'monthly', canvasId: 'monthlyChart', year, stale, data,
+        hasData: !!data && dashSum([data.data || []]) > 0,
+        draw: ctx => new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.labels,
+                datasets: [{ label: 'Cases', data: data.data, backgroundColor: '#1a6fad99', borderColor: '#1a6fad', borderWidth: 1, borderRadius: 5 }]
             },
-            scales: {
-                x: { grid: { display: false }, ticks: { font: { size: 9 } } },
-                y: { beginAtZero: true, ticks: { font: { size: 9 } } }
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    datalabels: {
+                        anchor: 'end', align: 'top',
+                        font: { size: 9, weight: 'bold' },
+                        color: '#0b1f4b',
+                        formatter: v => v > 0 ? v : ''
+                    }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 9 } } },
+                    y: { beginAtZero: true, ticks: { font: { size: 9 } } }
+                }
             }
-        }
+        })
     });
 }
 
-async function loadAgeChart() {
-    const data = await apiGet('/api/analytics/age-distribution');
-    const ctx  = document.getElementById('ageChart');
-    if (!ctx || !data) return;
-    destroyChart('age');
-    charts['age'] = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: data.labels,
-            datasets: [
-                { label: 'Male',   data: data.male,   backgroundColor: '#1a6fad99', borderColor: '#1a6fad', borderWidth:1, borderRadius:4 },
-                { label: 'Female', data: data.female, backgroundColor: '#8e44ad99', borderColor: '#8e44ad', borderWidth:1, borderRadius:4 }
-            ]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: {
-                legend: { position:'bottom', labels:{ boxWidth:10, font:{ size:10 } } },
-                datalabels: {
-                    anchor:'end', align:'top', font:{ size:9 },
-                    color: '#0b1f4b',
-                    formatter: v => v > 0 ? v : ''
-                }
+async function loadAgeChart(year = getDashYear(), stale = () => false) {
+    // NOTE: the backend must read ?year= for this chart to change (see notes).
+    const data = await apiGet(`/api/analytics/age-distribution?year=${year}`);
+    dashDraw({
+        key: 'age', canvasId: 'ageChart', year, stale, data,
+        hasData: !!data && dashSum([data.male || [], data.female || []]) > 0,
+        draw: ctx => new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.labels,
+                datasets: [
+                    { label: 'Male',   data: data.male,   backgroundColor: '#1a6fad99', borderColor: '#1a6fad', borderWidth:1, borderRadius:4 },
+                    { label: 'Female', data: data.female, backgroundColor: '#8e44ad99', borderColor: '#8e44ad', borderWidth:1, borderRadius:4 }
+                ]
             },
-            scales: {
-                x: { grid:{ display:false }, ticks:{ font:{ size:9 } } },
-                y: { beginAtZero:true, ticks:{ font:{ size:9 } } }
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { position:'bottom', labels:{ boxWidth:10, font:{ size:10 } } },
+                    datalabels: {
+                        anchor:'end', align:'top', font:{ size:9 },
+                        color: '#0b1f4b',
+                        formatter: v => v > 0 ? v : ''
+                    }
+                },
+                scales: {
+                    x: { grid:{ display:false }, ticks:{ font:{ size:9 } } },
+                    y: { beginAtZero:true, ticks:{ font:{ size:9 } } }
+                }
             }
-        }
+        })
     });
 }
 
@@ -1725,6 +1810,14 @@ async function confirmStatusChange() {
     confirmBtn.textContent = cfg.confirm;
 }
 
+/* First-login modal: block Esc entirely while locked */
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && isFirstLoginLocked()) {
+        const m = document.getElementById('firstLoginModal');
+        if (m && m.classList.contains('show')) { e.preventDefault(); e.stopImmediatePropagation(); }
+    }
+}, true);
+
 /* Esc closes these two modals; backdrop click is blocked while a request is running */
 document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
@@ -1767,6 +1860,17 @@ async function dlReport(type) {
     await downloadPDF(url, fn);
 }
 
+/* ── FIRST-LOGIN LOCK ──
+   While is_first_login === 'true', the user MUST finish the forced password change.
+   Applies ONLY to the firstLoginModal: it cannot be closed by backdrop click, Esc, or closeModal().
+   All other modals behave as before. */
+function isFirstLoginLocked() {
+    return sessionStorage.getItem('is_first_login') === 'true';
+}
+function isFirstLoginModal(el) {
+    return !!el && el.id === 'firstLoginModal';
+}
+
 /* ── MODAL HELPERS ── */
 function openModal(id) {
     const m = document.getElementById(id);
@@ -1776,10 +1880,15 @@ function openModal(id) {
     if (id === 'editProfileModal') loadProfileModal();
 }
 function closeModal(id) {
+    if (id === 'firstLoginModal' && isFirstLoginLocked()) return;   // mandatory
     const m = document.getElementById(id);
     if (m) m.classList.remove('show');
 }
-document.addEventListener('click', e=>{ if(e.target.classList.contains('modal-overlay')) e.target.classList.remove('show'); });
+document.addEventListener('click', e=>{
+    if (!e.target.classList.contains('modal-overlay')) return;
+    if (isFirstLoginModal(e.target) && isFirstLoginLocked()) return;   // cannot dismiss
+    e.target.classList.remove('show');
+});
 
 /* ── LOGOUT ── */
 async function confirmLogout() {
@@ -2335,15 +2444,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         const modal = document.getElementById('firstLoginModal');
         if (modal) {
             modal.classList.add('show');
-            // Prevent closing by clicking overlay
+
+            // Backdrop click: swallow it before ANY other listener can close the modal
             modal.addEventListener('click', function(e) {
-                if (e.target === modal) e.stopPropagation();
-            });
+                if (e.target === modal) { e.preventDefault(); e.stopImmediatePropagation(); }
+            }, true);
+
+            // Safety net: if anything removes .show while still locked, put it back
+            new MutationObserver(() => {
+                if (isFirstLoginLocked() && !modal.classList.contains('show')) {
+                    modal.classList.add('show');
+                }
+            }).observe(modal, { attributes: true, attributeFilter: ['class'] });
         }
-    } else {
-        // Normal load
-        loadDashboard();
     }
+    // (dashboard already loaded at the top of this handler)
 });
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -2567,6 +2682,8 @@ function showCustomConfirm() {
 
 // 4. Core Core Router para sa Exit Strategy
 async function handleModalExitAttempt(modalOverlay) {
+    // Mandatory first-login password change: never allow exit
+    if (isFirstLoginModal(modalOverlay) && isFirstLoginLocked()) return;
     // Suriin muna kung may un-saved na data sa form fields
     const changesDetected = hasUnsavedChanges(modalOverlay);
     
@@ -2608,6 +2725,11 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', function(e) {
         // Huwag patakbuhin ang interceptor kung ang overlay na pinindot ay ang alert box mismo
         if (this.id === 'customConfirmOverlay') return;
+        if (isFirstLoginModal(this) && isFirstLoginLocked()) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return;   // backdrop click does nothing
+        }
 
         if (e.target === this) {
             e.preventDefault();

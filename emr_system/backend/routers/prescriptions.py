@@ -1,9 +1,12 @@
 from datetime import datetime
+
 from websocket_manager import manager
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from database import get_db
+
 from models.models import (
     User,
     Patient,
@@ -12,15 +15,22 @@ from models.models import (
     InventoryItem,
     InventoryTransaction,
 )
+
 from middleware.auth import get_current_user
 
+
+# ============================================================
+# ROUTER
+# ============================================================
 
 router = APIRouter(
     prefix="/api/prescriptions",
     tags=["Prescriptions"]
 )
+
+
 # ============================================================
-# Helpers
+# HELPERS
 # ============================================================
 
 def require_doctor(current_user: User):
@@ -29,6 +39,7 @@ def require_doctor(current_user: User):
             status_code=403,
             detail="Only doctors can create prescriptions."
         )
+
     return current_user
 
 
@@ -38,6 +49,7 @@ def require_nurse(current_user: User):
             status_code=403,
             detail="Only nurses can dispense prescriptions."
         )
+
     return current_user
 
 
@@ -48,26 +60,63 @@ def prescription_to_dict(prescription):
         "prescription_id": prescription.prescription_id,
         "record_id": prescription.record_id,
         "item_id": prescription.item_id,
-        "item_name": item.item_name if item else "Unknown item",
-        "item_code": item.item_code if item else None,
-        "category": item.category if item else None,
-        "unit": item.unit if item else None,
+
+        "item_name": (
+            item.item_name
+            if item
+            else "Unknown item"
+        ),
+
+        "item_code": (
+            item.item_code
+            if item
+            else None
+        ),
+
+        "category": (
+            item.category
+            if item
+            else None
+        ),
+
+        "unit": (
+            item.unit
+            if item
+            else None
+        ),
+
         "quantity": prescription.quantity,
-        "instructions": prescription.instructions or "",
+
+        "instructions": (
+            prescription.instructions
+            or ""
+        ),
+
         "status": prescription.status,
-        "dispensed_quantity": prescription.dispensed_quantity or 0,
+
+        "dispensed_quantity": (
+            prescription.dispensed_quantity
+            or 0
+        ),
+
         "dispensed_by": prescription.dispensed_by,
+
         "dispensed_at": (
             prescription.dispensed_at.isoformat()
-            if prescription.dispensed_at else None
+            if prescription.dispensed_at
+            else None
         ),
+
         "created_at": (
             prescription.created_at.isoformat()
-            if prescription.created_at else None
+            if prescription.created_at
+            else None
         ),
+
         "updated_at": (
             prescription.updated_at.isoformat()
-            if prescription.updated_at else None
+            if prescription.updated_at
+            else None
         ),
     }
 
@@ -175,17 +224,29 @@ async def create_prescription(
     quantity = body.get("quantity")
     instructions = body.get("instructions")
 
+    # --------------------------------------------------------
+    # Validate record
+    # --------------------------------------------------------
+
     if not record_id:
         raise HTTPException(
             status_code=400,
             detail="record_id is required."
         )
 
+    # --------------------------------------------------------
+    # Validate item
+    # --------------------------------------------------------
+
     if not item_id:
         raise HTTPException(
             status_code=400,
             detail="item_id is required."
         )
+
+    # --------------------------------------------------------
+    # Validate quantity
+    # --------------------------------------------------------
 
     try:
         quantity = int(quantity)
@@ -201,6 +262,10 @@ async def create_prescription(
             detail="Quantity must be greater than 0."
         )
 
+    # --------------------------------------------------------
+    # Check medical record
+    # --------------------------------------------------------
+
     record = db.query(MedicalRecord).filter(
         MedicalRecord.record_id == record_id
     ).first()
@@ -210,6 +275,10 @@ async def create_prescription(
             status_code=404,
             detail="Medical record not found."
         )
+
+    # --------------------------------------------------------
+    # Check inventory item
+    # --------------------------------------------------------
 
     item = db.query(InventoryItem).filter(
         InventoryItem.item_id == item_id,
@@ -222,6 +291,10 @@ async def create_prescription(
             detail="Inventory item not found or inactive."
         )
 
+    # --------------------------------------------------------
+    # Create prescription
+    # --------------------------------------------------------
+
     prescription = MedicalRecordPrescription(
         record_id=record_id,
         item_id=item_id,
@@ -233,31 +306,80 @@ async def create_prescription(
 
     db.add(prescription)
 
+    # --------------------------------------------------------
+    # Save prescription
+    # --------------------------------------------------------
+
     try:
         db.commit()
         db.refresh(prescription)
 
-        await manager.broadcast_event(
-            "prescription_created",
-            "prescription",
-            "created",
-            prescription_id=prescription.prescription_id,
-            record_id=prescription.record_id,
-            patient_id=prescription.patient_id,
-            item_id=prescription.item_id,
-            quantity=prescription.quantity,
-            user_id=current_user.user_id)
-    except Exception:
+    except Exception as e:
         db.rollback()
+
+        print(
+            "❌ PRESCRIPTION CREATE ERROR:",
+            repr(e)
+        )
 
         raise HTTPException(
             status_code=500,
             detail="Failed to save prescription."
         )
 
+    # --------------------------------------------------------
+    # WebSocket notification
+    # AFTER successful database commit
+    # --------------------------------------------------------
+
+    try:
+        await manager.broadcast_event(
+            "prescription_created",
+            "prescription",
+            "created",
+
+            prescription_id=(
+                prescription.prescription_id
+            ),
+
+            record_id=(
+                prescription.record_id
+            ),
+
+            patient_id=(
+                prescription.patient_id
+            ),
+
+            item_id=(
+                prescription.item_id
+            ),
+
+            quantity=(
+                prescription.quantity
+            ),
+
+            user_id=current_user.user_id
+        )
+
+    except Exception as websocket_error:
+
+        print(
+            "⚠️ PRESCRIPTION CREATE WEBSOCKET ERROR:",
+            repr(websocket_error)
+        )
+
+    # --------------------------------------------------------
+    # Response
+    # --------------------------------------------------------
+
     return {
         "message": "Prescription created successfully.",
-        "prescription": prescription_to_dict(prescription)
+
+        "prescription": (
+            prescription_to_dict(
+                prescription
+            )
+        )
     }
 
 
@@ -274,12 +396,21 @@ async def dispense_prescription(
 ):
     require_nurse(current_user)
 
+    # --------------------------------------------------------
+    # Read request
+    # --------------------------------------------------------
+
     body = await request.json()
 
     quantity = body.get("quantity")
 
+    # --------------------------------------------------------
+    # Validate quantity
+    # --------------------------------------------------------
+
     try:
         quantity = int(quantity)
+
     except (TypeError, ValueError):
         raise HTTPException(
             status_code=400,
@@ -291,6 +422,10 @@ async def dispense_prescription(
             status_code=400,
             detail="Dispense quantity must be greater than 0."
         )
+
+    # --------------------------------------------------------
+    # Find prescription
+    # --------------------------------------------------------
 
     prescription = db.query(
         MedicalRecordPrescription
@@ -305,6 +440,10 @@ async def dispense_prescription(
             detail="Prescription not found."
         )
 
+    # --------------------------------------------------------
+    # Check prescription status
+    # --------------------------------------------------------
+
     if prescription.status == "cancelled":
         raise HTTPException(
             status_code=400,
@@ -317,12 +456,25 @@ async def dispense_prescription(
             detail="This prescription has already been fully dispensed."
         )
 
-    already_dispensed = prescription.dispensed_quantity or 0
+    # --------------------------------------------------------
+    # Calculate remaining quantity
+    # --------------------------------------------------------
+
+    already_dispensed = (
+        prescription.dispensed_quantity
+        or 0
+    )
 
     remaining_quantity = (
-        prescription.quantity -
-        already_dispensed
+        prescription.quantity
+        - already_dispensed
     )
+
+    if remaining_quantity <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="This prescription has no remaining quantity."
+        )
 
     if quantity > remaining_quantity:
         raise HTTPException(
@@ -333,8 +485,14 @@ async def dispense_prescription(
             )
         )
 
+    # --------------------------------------------------------
+    # Find inventory item
+    # --------------------------------------------------------
+
     item = db.query(InventoryItem).filter(
-        InventoryItem.item_id == prescription.item_id,
+        InventoryItem.item_id ==
+        prescription.item_id,
+
         InventoryItem.is_active == True
     ).first()
 
@@ -344,104 +502,235 @@ async def dispense_prescription(
             detail="Inventory item not found or inactive."
         )
 
-    stock_before = item.current_stock or 0
+    # --------------------------------------------------------
+    # Check stock
+    # --------------------------------------------------------
+
+    stock_before = (
+        item.current_stock
+        or 0
+    )
 
     if stock_before < quantity:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Insufficient stock for {item.item_name}. "
+                f"Insufficient stock for "
+                f"{item.item_name}. "
                 f"Available: {stock_before}, "
                 f"Requested: {quantity}."
             )
         )
 
-    stock_after = stock_before - quantity
+    # --------------------------------------------------------
+    # Calculate new values
+    # --------------------------------------------------------
 
-    item.current_stock = stock_after
+    stock_after = (
+        stock_before - quantity
+    )
 
     new_dispensed_quantity = (
         already_dispensed + quantity
     )
 
+    # --------------------------------------------------------
+    # Update inventory
+    # --------------------------------------------------------
+
+    item.current_stock = stock_after
+
+    # --------------------------------------------------------
+    # Update prescription
+    # --------------------------------------------------------
+
     prescription.dispensed_quantity = (
         new_dispensed_quantity
     )
 
-    prescription.dispensed_by = current_user.user_id
-    prescription.dispensed_at = datetime.utcnow()
+    prescription.dispensed_by = (
+        current_user.user_id
+    )
 
+    prescription.dispensed_at = (
+        datetime.utcnow()
+    )
+
+    # Fully dispensed
     if new_dispensed_quantity >= prescription.quantity:
         prescription.status = "dispensed"
 
+    # Otherwise keep pending
+    else:
+        prescription.status = "pending"
+
+    # --------------------------------------------------------
+    # Create inventory transaction
+    # --------------------------------------------------------
+
     transaction = InventoryTransaction(
         item_id=item.item_id,
+
         transaction_type="dispense",
+
         quantity=quantity,
+
         stock_before=stock_before,
+
         stock_after=stock_after,
+
         remarks=(
             f"Dispensed for prescription "
             f"#{prescription.prescription_id}"
         ),
+
         user_id=current_user.user_id
     )
 
     db.add(transaction)
 
+    # ========================================================
+    # DATABASE TRANSACTION
+    # ========================================================
+
     try:
         db.commit()
+
+    except Exception as e:
+        db.rollback()
+
+        print(
+            "❌ DISPENSE DATABASE ERROR:",
+            repr(e)
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to dispense prescription."
+            )
+        )
+
+    # --------------------------------------------------------
+    # Refresh after successful commit
+    # --------------------------------------------------------
+
+    try:
+        db.refresh(prescription)
+        db.refresh(item)
+        db.refresh(transaction)
+
+    except Exception as e:
+
+        print(
+            "⚠️ DISPENSE REFRESH ERROR:",
+            repr(e)
+        )
+
+    # ========================================================
+    # WEBSOCKET NOTIFICATIONS
+    # IMPORTANT:
+    # These happen AFTER DB COMMIT.
+    #
+    # If WebSocket fails, the dispense is still successful.
+    # ========================================================
+
+    try:
+
         await manager.broadcast_event(
             "prescription_dispensed",
             "prescription",
             "dispensed",
-            prescription_id=prescription.prescription_id,
-            record_id=prescription.record_id,
-            patient_id=prescription.patient_id,
-            item_id=prescription.item_id,
-            quantity=dispense_quantity,
+
+            prescription_id=(
+                prescription.prescription_id
+            ),
+
+            record_id=(
+                prescription.record_id
+            ),
+
+            patient_id=(
+                prescription.patient_id
+            ),
+
+            item_id=(
+                prescription.item_id
+            ),
+
+            quantity=quantity,
+
             user_id=current_user.user_id
         )
+
+    except Exception as websocket_error:
+
+        print(
+            "⚠️ PRESCRIPTION DISPENSE WEBSOCKET ERROR:",
+            repr(websocket_error)
+        )
+
+    # --------------------------------------------------------
+
+    try:
 
         await manager.broadcast_event(
             "inventory_stock_updated",
             "inventory",
             "stock_updated",
+
             item_id=item.item_id,
+
             current_stock=item.current_stock,
+
             user_id=current_user.user_id
         )
 
-        db.refresh(prescription)
-        db.refresh(item)
-        db.refresh(transaction)
+    except Exception as websocket_error:
 
-    except Exception:
-        db.rollback()
-
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to dispense prescription."
+        print(
+            "⚠️ INVENTORY WEBSOCKET ERROR:",
+            repr(websocket_error)
         )
 
-    return {
-        "message": "Prescription dispensed successfully.",
+    # ========================================================
+    # SUCCESS RESPONSE
+    # ========================================================
 
-        "prescription": prescription_to_dict(
-            prescription
+    return {
+        "message": (
+            "Prescription dispensed successfully."
+        ),
+
+        "prescription": (
+            prescription_to_dict(
+                prescription
+            )
         ),
 
         "inventory": {
             "item_id": item.item_id,
+
             "item_name": item.item_name,
+
             "stock_before": stock_before,
+
             "stock_after": stock_after,
+
             "dispensed_quantity": quantity
         },
 
         "transaction": {
-            "transaction_id": transaction.transaction_id,
-            "transaction_type": transaction.transaction_type,
-            "quantity": transaction.quantity
+            "transaction_id": (
+                transaction.transaction_id
+            ),
+
+            "transaction_type": (
+                transaction.transaction_type
+            ),
+
+            "quantity": (
+                transaction.quantity
+            )
         }
     }
