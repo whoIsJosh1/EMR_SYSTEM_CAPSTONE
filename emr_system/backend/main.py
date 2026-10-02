@@ -80,6 +80,9 @@ async def create_medical_record(
         respiratory_rate = body.get("respiratory_rate"),
         lmp              = body.get("lmp") if patient.sex == "Female" else None,
         notes            = body.get("notes"),
+        follow_up_required = body.get("follow_up_required", False),
+        follow_up_date     = body.get("follow_up_date") or None,
+        follow_up_time     = body.get("follow_up_time") or None,
         user_id          = current_user.user_id
     )
     db.add(rec)
@@ -129,7 +132,10 @@ async def get_patient_records(
             "respiratory_rate": r.respiratory_rate,
             "lmp":              str(r.lmp) if r.lmp else None,
             "notes":            r.notes,
-            "encoder":          r.encoder.name if r.encoder else "—",
+            "follow_up_required": bool(r.follow_up_required),
+            "follow_up_date":     str(r.follow_up_date) if r.follow_up_date else None,
+            "follow_up_time":     str(r.follow_up_time) if r.follow_up_time else None,
+            "encoder":            r.encoder.name if r.encoder else "—",
             "created_at":       str(r.created_at)
         }
         for r in records
@@ -175,7 +181,10 @@ async def update_medical_record(
         "height_cm",
         "heart_rate",
         "respiratory_rate",
-        "notes"
+        "notes",
+        "follow_up_required",
+        "follow_up_date",
+        "follow_up_time"
     ]
 
     for field in fields:
