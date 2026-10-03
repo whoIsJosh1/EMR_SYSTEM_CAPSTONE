@@ -310,7 +310,7 @@
         <div class="form-step active" id="formStep1">
             <div class="form-row">
                 <div class="form-group"><label>Visit Date *</label><input type="date" id="recDate"></div>
-                <div class="form-group"><label>Chief Complaint</label><input type="text" id="recComplaint" placeholder="Main reason for visit"></div>
+                <div class="form-group"><label>Reason for Visit</label><input type="text" id="recComplaint" placeholder="Main reason for visit"></div>
             </div>
             
             <div class="section-sep" style="margin: 15px 0;"></div>
@@ -396,6 +396,127 @@
 
             </div>
             <div class="form-group"><label>Notes</label><textarea id="recNotes" placeholder="Additional notes..."></textarea></div>
+            <div class="form-group" style="margin-top:16px;">
+            <label style="font-weight:600;">
+                Follow-up Check-up
+            </label>
+
+            <div style="margin-top:8px;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input
+                        type="checkbox"
+                        id="recFollowUpRequired"
+                        onchange="toggleFollowUpDate()"
+                    >
+                    Follow-up required
+                </label>
+            </div>
+
+            <div id="followUpDateContainer" style="display:none;margin-top:10px;">
+                <label for="recFollowUpDate">
+                    Follow-up Date
+                </label>
+
+                <div style="
+                    position:relative;
+                    width:100%;
+                    margin-top:8px;
+                ">
+
+                    <button
+                        type="button"
+                        id="followUpDateButton"
+                        onclick="openFollowUpDatePicker()"
+                        style="
+                            width:100%;
+                            height:44px;
+                            padding:0 14px;
+                            display:flex;
+                            align-items:center;
+                            gap:10px;
+
+                            background:#ffffff;
+                            color:#333333;
+
+                            border:1px solid #d1d5db;
+                            border-radius:8px;
+
+                            font-family:inherit;
+                            font-size:14px;
+                            font-weight:500;
+
+                            cursor:pointer;
+                            text-align:left;
+                            box-sizing:border-box;
+                        "
+                    >
+                        <span style="
+                            font-size:16px;
+                            flex-shrink:0;
+                        ">📅</span>
+
+                        <span
+                            id="followUpDateDisplay"
+                            style="
+                                flex:1;
+                                color:#6b7280;
+                            "
+                        >
+                            Select follow-up date
+                        </span>
+                    </button>
+
+                    <input
+                        type="date"
+                        id="recFollowUpDate"
+                        onchange="updateFollowUpDateDisplay()"
+                        style="
+                            position:absolute;
+                            width:1px;
+                            height:1px;
+                            opacity:0;
+                            pointer-events:none;
+                        "
+                    >
+
+                </div>
+                <div style="margin-top:12px;">
+                    <label
+                        for="recFollowUpTime"
+                        style="
+                            display:block;
+                            margin-bottom:6px;
+                            font-size:13px;
+                            font-weight:600;
+                        "
+                    >
+                        Follow-up Time
+                    </label>
+
+                    <input
+                        type="time"
+                        id="recFollowUpTime"
+                        style="
+                            width:100%;
+                            height:44px;
+                            padding:0 12px;
+                            box-sizing:border-box;
+
+                            background:#ffffff;
+                            color:#333333;
+
+                            border:1px solid #d1d5db;
+                            border-radius:8px;
+
+                            font-family:inherit;
+                            font-size:14px;
+
+                            cursor:pointer;
+                        "
+                    >
+                </div>
+            </div>
+</div>
         </div>
     </div>
 
@@ -899,6 +1020,10 @@ async function loadMedicalHistory(pid) {
             `/api/medical-records/patient/${pid}`
         );
 
+        const patient = await apiGet(
+            `/api/patients/${pid}`
+        );
+
         const el = document.getElementById('recordsTimeline');
 
         if (!records || !records.length) {
@@ -1381,7 +1506,39 @@ async function loadMedicalHistory(pid) {
 
 
                 ${prescriptionSection}
+                ${
+                r.follow_up_required && r.follow_up_date
+                    ? `
+                    <div style="
+                        margin-top:14px;
+                        padding:10px 12px;
+                        border-radius:8px;
+                        background:var(--soft);
+                        border-left:4px solid var(--primary);
+                    ">
+                        <div style="
+                            font-size:12px;
+                            font-weight:700;
+                            margin-bottom:5px;
+                        ">
+                            📅 Follow-up Check-up
+                        </div>
 
+                        <div style="
+                            font-size:13px;
+                            color:var(--text);
+                        ">
+                            ${fmtDate(r.follow_up_date)}
+                            ${
+                                r.follow_up_time
+                                    ? ` · ${formatFollowUpTime(r.follow_up_time)}`
+                                    : ''
+                            }
+                        </div>
+                    </div>
+                    `
+                    : ''
+            }
 
                 ${completeDiagnosisButton}
 
@@ -1525,6 +1682,11 @@ async function openDoctorDiagnosis(recordId) {
         // Fill Step 1 information
         document.getElementById('recDate').value =
             record.visit_date || '';
+        const followUpDateInput = document.getElementById('recFollowUpDate');
+
+        if (followUpDateInput && record.visit_date) {
+            followUpDateInput.min = record.visit_date;
+        }    
 
         document.getElementById('recComplaint').value =
             record.chief_complaint || '';
@@ -1563,6 +1725,23 @@ async function openDoctorDiagnosis(recordId) {
         document.getElementById('recNotes').value =
             record.notes || '';
 
+        const followUpCheckbox =
+            document.getElementById('recFollowUpRequired');
+
+        const followUpDate =
+            document.getElementById('recFollowUpDate');
+
+        if (followUpCheckbox) {
+            followUpCheckbox.checked = !!record.follow_up_required;
+        }
+
+        if (followUpDate) {
+            followUpDate.value = record.follow_up_date || '';
+        }
+
+        updateFollowUpDateDisplay();   
+
+        toggleFollowUpDate();
         // Change modal title
         const title =
             document.getElementById('recordModalTitle');
@@ -1623,10 +1802,89 @@ async function openDoctorDiagnosis(recordId) {
     }
     resetPrescriptionRows();
 }
+function toggleFollowUpDate() {
+    const checkbox = document.getElementById('recFollowUpRequired');
+    const container = document.getElementById('followUpDateContainer');
+    const dateInput = document.getElementById('recFollowUpDate');
+
+    if (!checkbox || !container) return;
+
+    if (checkbox.checked) {
+        container.style.display = '';
+    } else {
+        container.style.display = 'none';
+
+        if (dateInput) {
+            dateInput.value = '';
+        }
+    }
+}
+function openFollowUpDatePicker() {
+    const input = document.getElementById('recFollowUpDate');
+
+    if (!input) {
+        console.error('Follow-up date input not found.');
+        return;
+    }
+
+    input.focus();
+
+    if (typeof input.showPicker === 'function') {
+        input.showPicker();
+    } else {
+        input.click();
+    }
+}
+
+
+function updateFollowUpDateDisplay() {
+    const input = document.getElementById('recFollowUpDate');
+    const display = document.getElementById('followUpDateDisplay');
+
+    if (!input || !display) return;
+
+    if (!input.value) {
+        display.textContent = 'Select follow-up date';
+        display.style.color = '#6b7280';
+        return;
+    }
+
+    // Convert YYYY-MM-DD into a readable date
+    const [year, month, day] = input.value.split('-');
+
+    const date = new Date(
+        Number(year),
+        Number(month) - 1,
+        Number(day)
+    );
+
+    display.textContent = date.toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+    });
+
+    display.style.color = '#333333';
+}
 async function submitRecord() {
 
     const date =
         document.getElementById('recDate').value;
+    const followUpRequired =
+        document.getElementById('recFollowUpRequired')?.checked || false;
+
+    const followUpDate =
+        document.getElementById('recFollowUpDate')?.value || null;
+
+    const followUpTime =
+        document.getElementById('recFollowUpTime')?.value || null;
+    if (followUpRequired && followUpDate && followUpDate < date) {
+        showToast(
+            'Follow-up date cannot be earlier than the visit date.',
+            'error'
+        );
+        return;
+    }    
 
     const role =
         sessionStorage.getItem('user_role') || 'bhw';
@@ -1711,8 +1969,19 @@ async function submitRecord() {
 
             notes:
                 document.getElementById('recNotes')
-                    .value.trim() || null
-        };
+                    .value.trim() || null,
+           follow_up_required:
+                document.getElementById('recFollowUpRequired')?.checked || false,
+
+            follow_up_date:
+                document.getElementById('recFollowUpRequired')?.checked
+                    ? (document.getElementById('recFollowUpDate')?.value || null)
+                    : null,
+            follow_up_time:
+                document.getElementById('recFollowUpRequired')?.checked
+                    ? (document.getElementById('recFollowUpTime')?.value || null)
+                    : null,        
+        }
 
         let r;
 
@@ -2372,7 +2641,19 @@ function fmtDate(d) {
     if (!d) return '—';
     return new Date(d).toLocaleDateString('en-PH', { month:'short', day:'numeric', year:'numeric' });
 }
+function formatFollowUpTime(time) {
+    if (!time) return '';
 
+    const [hour, minute] = time.split(':');
+
+    const date = new Date();
+    date.setHours(Number(hour), Number(minute), 0, 0);
+
+    return date.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit'
+    });
+}
 async function handleLogout() {
     if (!confirm('Sign out?')) return;
     try { await apiPost('/api/auth/logout', {}); } catch(_) {}
@@ -2407,11 +2688,11 @@ async function unlockSess() {
 
 // Permission matrix — mirrors backend PERMISSIONS in middleware/auth.py
 const ROLE_CONFIG = {
-    admin:   { medical_records:'edit', immunization:'edit',  pregnancy:'edit',  health_problems:'edit',  can_add_patient:true  },
-    bhw:     { medical_records:'edit', immunization:'edit',  pregnancy:'view',  health_problems:'edit',  can_add_patient:true  },
-    midwife: { medical_records:'view', immunization:'none',  pregnancy:'edit',  health_problems:'view',  can_add_patient:false },
-    doctor:  { medical_records:'edit', immunization:'view',  pregnancy:'view',  health_problems:'view',  can_add_patient:false },
-    nurse:   { medical_records:'view', immunization:'view', pregnancy:'view', health_problems:'view', can_add_patient:false },
+    admin:   { medical_records:'view', immunization:'edit',  pregnancy:'edit',  health_problems:'edit',  can_add_patient:true  },
+    bhw:     { medical_records:'edit', immunization:'none',  pregnancy:'view',  health_problems:'none',  can_add_patient:true  },
+    midwife: { medical_records:'view', immunization:'none',  pregnancy:'edit',  health_problems:'none',  can_add_patient:false },
+    doctor:  { medical_records:'edit', immunization:'edit',  pregnancy:'view',  health_problems:'edit',  can_add_patient:false },
+    nurse:   { medical_records:'view', immunization:'edit', pregnancy:'view', health_problems:'none', can_add_patient:false },
 };
 
 let _roleConfig = null;
@@ -2429,12 +2710,19 @@ async function loadPermissions() {
         badge.style.background = colors[role] || '#6b7fa8';
     }
 
-    // Add Patient button visibility
-    const addPatBtn = document.getElementById('addPatientBtn');
-    if (addPatBtn) addPatBtn.style.display = _roleConfig.can_add_patient ? '' : 'none';
+    // Add Patient button — BHW ONLY
+    const addPatBtn = document.getElementById('patientFab');
 
+    if (addPatBtn) {
+        addPatBtn.style.display =
+            role === 'bhw' ? '' : 'none';
+    }
+
+    if (addPatBtn) {
+        addPatBtn.style.display = role === 'bhw' ? '' : 'none';
+    }
     // Admin-only sidebar
-    if (role !== 'admin') {
+    if (role !== 'bhw') {
         document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
     }
 }
@@ -2829,5 +3117,6 @@ window.addEventListener(
     }
 );
 </script>
+
 </body>
 </html>

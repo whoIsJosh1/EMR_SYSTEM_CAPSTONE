@@ -379,11 +379,11 @@ def _get_ui_config(role: str) -> dict:
             "tabs": {
                 "medical_records":  {"visible": True,  "editable": True},
                 "immunizations":    {"visible": True,  "editable": False},
-                "health_problems":  {"visible": True,  "editable": False},
+                "health_problems":  {"visible": True,  "editable": True},
                 "pregnancy":        {"visible": True,  "editable": False},
             },
             "sidebar": ["patients", "surveillance"],
-            "can_add_patient":     True,
+            "can_add_patient":     False,
             "can_archive_patient": False,
             "can_manage_users":    False,
         },

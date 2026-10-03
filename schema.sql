@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS medical_records (
     heart_rate          INT NULL,
     respiratory_rate    INT NULL,
     lmp                 DATE NULL COMMENT 'Female patients only',
+    follow_up_required BOOLEAN NOT NULL DEFAULT FALSE,
+    follow_up_date DATE DEFAULT NULL,
     notes               TEXT NULL,
     user_id             INT NOT NULL,
     created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
