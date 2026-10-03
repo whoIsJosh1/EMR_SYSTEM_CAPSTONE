@@ -222,7 +222,7 @@ PERMISSIONS = {
     },
     "doctor": {
         "medical_records": "edit",
-        "immunization":    "view",
+        "immunization":    "edit",
         "pregnancy":       "view",
         "health_problems": "view",
         "users":           "none",

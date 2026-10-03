@@ -38,6 +38,8 @@ from routers.reports   import router as reports_router
 from routers.inventory import router as inventory_router
 from routers.prescriptions import router as prescriptions_router
 from routers.websocket import router as websocket_router
+from routers import ai_insights
+
 # ── Rate limiter ──────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
 
@@ -80,6 +82,9 @@ async def create_medical_record(
         respiratory_rate = body.get("respiratory_rate"),
         lmp              = body.get("lmp") if patient.sex == "Female" else None,
         notes            = body.get("notes"),
+        follow_up_required = body.get("follow_up_required", False),
+        follow_up_date     = body.get("follow_up_date") or None,
+        follow_up_time     = body.get("follow_up_time") or None,
         user_id          = current_user.user_id
     )
     db.add(rec)
@@ -129,7 +134,10 @@ async def get_patient_records(
             "respiratory_rate": r.respiratory_rate,
             "lmp":              str(r.lmp) if r.lmp else None,
             "notes":            r.notes,
-            "encoder":          r.encoder.name if r.encoder else "—",
+            "follow_up_required": bool(r.follow_up_required),
+            "follow_up_date":     str(r.follow_up_date) if r.follow_up_date else None,
+            "follow_up_time":     str(r.follow_up_time) if r.follow_up_time else None,
+            "encoder":            r.encoder.name if r.encoder else "—",
             "created_at":       str(r.created_at)
         }
         for r in records
@@ -175,7 +183,10 @@ async def update_medical_record(
         "height_cm",
         "heart_rate",
         "respiratory_rate",
-        "notes"
+        "notes",
+        "follow_up_required",
+        "follow_up_date",
+        "follow_up_time"
     ]
 
     for field in fields:
@@ -627,6 +638,7 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(patients_router)
 app.include_router(analytics_router)
+app.include_router(ai_insights.router)   # AI Insights (admin only)
 app.include_router(reports_router)
 app.include_router(mr_router)
 app.include_router(immun_router)

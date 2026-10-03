@@ -6,7 +6,7 @@
 # ============================================================
 
 from sqlalchemy import (
-    Column, Integer, String, Text, Date, DateTime,
+    Column, Integer, String, Text, Date, Time, DateTime,
     Enum, ForeignKey, DECIMAL, Boolean, SmallInteger
 )
 from sqlalchemy.orm import relationship
@@ -142,7 +142,13 @@ class MedicalRecord(Base):
     heart_rate       = Column(Integer, nullable=True)
     respiratory_rate = Column(Integer, nullable=True)
     lmp              = Column(Date,    nullable=True)  # Female only
-    notes            = Column(Text,    nullable=True)
+    notes            = Column(Text, nullable=True)
+
+    # Follow-up check-up
+    follow_up_required = Column(Boolean, nullable=False, default=False)
+    follow_up_date     = Column(Date, nullable=True)
+    follow_up_time = Column(Time, nullable=True)
+
     user_id          = Column(Integer, ForeignKey("users.user_id"), nullable=False)
     created_at       = Column(DateTime, server_default=func.now())
     updated_at       = Column(DateTime, server_default=func.now(), onupdate=func.now())
