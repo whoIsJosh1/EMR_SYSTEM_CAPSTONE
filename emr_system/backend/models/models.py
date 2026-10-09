@@ -24,7 +24,7 @@ class User(Base):
     name            = Column(String(150), nullable=False)
     email           = Column(String(150), nullable=False, unique=True)
     password_hash   = Column(String(255), nullable=False)
-    role            = Column(Enum("admin", "bhw", "midwife", "doctor","nurse"), nullable=False, default="bhw")
+    role            = Column(Enum("admin", "bhw", "midwife", "doctor", "nurse"), nullable=False, default="bhw")
     position        = Column(String(100), nullable=True)
     status          = Column(Enum("active", "inactive", "locked"), nullable=False, default="active")
     is_first_login  = Column(Boolean, nullable=False, default=True)   # True = must change password on first login
@@ -37,7 +37,7 @@ class User(Base):
     audit_logs      = relationship("AuditLog",      back_populates="user")
     medical_records = relationship("MedicalRecord", back_populates="encoder")
     immunizations   = relationship("Immunization",  back_populates="encoder")
-    disease_cases   = relationship("DiseaseCase",   back_populates="encoder")
+    disease_cases   = relationship("DiseaseCase",   back_populates="encoder", foreign_keys="DiseaseCase.user_id")
     pregnancies     = relationship("Pregnancy",     back_populates="encoder")
 
 
@@ -64,6 +64,7 @@ class Patient(Base):
     is_archived      = Column(Boolean, nullable=False, default=False)
     created_at       = Column(DateTime, server_default=func.now())
     updated_at       = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    photo_filename   = Column(String(64), nullable=True)
 
     medical_records  = relationship("MedicalRecord",  back_populates="patient", cascade="all, delete-orphan")
     immunizations    = relationship("Immunization",    back_populates="patient", cascade="all, delete-orphan")
@@ -316,9 +317,20 @@ class DiseaseCase(Base):
     user_id         = Column(Integer, ForeignKey("users.user_id"), nullable=False)
     created_at      = Column(DateTime, server_default=func.now())
 
-    disease = relationship("Disease",   back_populates="cases")
-    patient = relationship("Patient",   back_populates="disease_cases")
-    encoder = relationship("User",      back_populates="disease_cases")
+    # Validation / verification ng case (Surveillance Hub)
+    # server_default="Confirmed" -> lumang rows hindi papasok sa queue;
+    # default="Suspected" -> lahat ng BAGONG case ay papasok sa queue hanggang ma-verify.
+    case_status     = Column(Enum("Suspected", "Probable", "Confirmed", "Rejected"),
+                             nullable=False, default="Suspected", server_default="Confirmed")
+    verified_by     = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    verified_at     = Column(DateTime, nullable=True)
+    escalated_by    = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    escalated_at    = Column(DateTime, nullable=True)
+
+    disease  = relationship("Disease",   back_populates="cases")
+    patient  = relationship("Patient",   back_populates="disease_cases")
+    encoder  = relationship("User",      back_populates="disease_cases", foreign_keys=[user_id])
+    verifier = relationship("User",      foreign_keys=[verified_by])
 
 
 # ============================================================

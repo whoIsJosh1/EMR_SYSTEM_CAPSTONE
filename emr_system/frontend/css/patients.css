@@ -78,7 +78,8 @@ body {
     color: var(--text);
     font-size: 14px;
     display: flex;
-    min-height: 100vh
+    min-height: 100vh;
+    
 }
 
 /* ── Sidebar ── */
@@ -402,7 +403,9 @@ body {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
-    transition: margin-left .25s ease
+    height: 100vh;
+    transition: margin-left .25s ease;
+    overflow: hidden;
 }
 
 .topbar {
@@ -479,7 +482,12 @@ body {
 }
 
 .content {
-    padding: 24px
+    padding: 24px;
+    flex: 1;                 /* Kunin ang natitirang space sa ibaba ng topbar */
+    overflow-y: auto;        /* Dito lang pwedeng mag-scroll ang buong page content kung marami kang card */
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
 }
 
 /* ── Cards ── */
@@ -1593,3 +1601,87 @@ tbody td {
         margin-left: 0
     }
 }
+
+/* Para manatiling nakapako sa itaas ang Table Header (<thead>) habang nag-sscroll ka pababa */
+table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg);   /* Tinitiyak na hindi magiging transparent ang header habang dumadaan ang rows */
+    box-shadow: inset 0 -2px 0 var(--border); /* Pinapanatili ang border line sa ilalim ng th */
+}
+
+
+
+.table-wrap {
+    overflow-x: auto;
+    overflow-y: hidden; /* Siguraduhing walang scrollbar ang buong wrapper */
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+/* I-configure ang table para sa block-scrolling body */
+table {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+}
+
+/* Panatilihing structural ang tabular presentation ng row */
+table tr {
+    display: grid;
+    /* Palitan ang grid-template-columns base sa dami ng kolum mo */
+    /* Halimbawa para sa 5 columns: grid-template-columns: 60px 2fr 1fr 1fr 100px; */
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); 
+}
+
+thead, tbody {
+    display: block;
+}
+
+thead {
+    flex: 0 0 auto;
+    width: 100%;
+}
+
+/* ITO ANG IMPORTANTENG BAHAGI: Ang scrollbar ay magsisimula lang sa ilalim ng table head */
+tbody {
+    flex: 1 1 auto;
+    max-height: 422px; /* Dito mo limitahan ang taas ng listahan ng mga pasyente */
+    overflow-y: auto;  /* Dito lang lalabas ang vertical scrollbar! */
+    width: 100%;
+}
+
+/* Custom styling para sa scrollbar ng table-wrap */
+.tbody::-webkit-scrollbar {
+    width: 6px;               /* Lapad ng scrollbar */
+    height: 6px;              /* Taas para sa horizontal scroll */
+}
+
+.tbody::-webkit-scrollbar-track {
+    background: transparent; 
+}
+
+.tbody::-webkit-scrollbar-thumb {
+    background: rgba(11, 31, 75, 0.2); /* Kulay na hango sa --navy mo pero may opacity */
+    border-radius: 10px;       
+}
+
+.tbody::-webkit-scrollbar-thumb:hover {
+    background: var(--navy);  /* Titindi ang kulay kapag tinapatan ng mouse */
+}
+
+
+/* ============================================================
+   PATIENT PHOTO
+   ============================================================ */
+.photo-field { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.photo-preview { width: 96px; height: 96px; min-width: 96px; border-radius: 12px; border: 1.5px dashed var(--border); background: rgba(107, 127, 168, .08); display: flex; align-items: center; justify-content: center; overflow: hidden; font-size: 11px; color: var(--muted); }
+.photo-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-ctrl { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.photo-ctrl label.btn { cursor: pointer; }
+.photo-hint { flex-basis: 100%; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.pt-namecell { display: flex; align-items: center; gap: 10px; }
+.pt-thumb { width: 34px; height: 34px; min-width: 34px; border-radius: 50%; background: var(--border) center / cover no-repeat; color: var(--navy); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.profile-av { overflow: hidden; background-position: center; background-repeat: no-repeat; }
+.profile-av.has-photo { background-size: cover; }
+@media (max-width: 480px) { .photo-field { flex-direction: column; align-items: flex-start; } }

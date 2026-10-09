@@ -18,3 +18,10 @@ secret_settings.py
 .idea/
 *.suo
 *.ntvs*
+
+private_uploads/
+
+compare.html
+compare.py
+compare.js
+compare.css

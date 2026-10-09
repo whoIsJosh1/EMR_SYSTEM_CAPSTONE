@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Patients — EMR System</title>
-    <link rel="icon" type="image/png" href="frontend/img/DARK MODE (1).png">
+    <link rel="icon" type="image/png" href="/frontend/img/DARK MODE (1).png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -249,6 +249,15 @@
         <button class="modal-close" onclick="closeModal('addPatientModal')">&#x2715;</button>
     </div>
     <div class="modal-body">
+        <div class="photo-field">
+            <div class="photo-preview" id="ptPhotoPreview" role="img" aria-label="Patient photo preview"><span>No photo</span></div>
+            <div class="photo-ctrl">
+                <label class="btn btn-outline btn-sm" for="ptPhoto">Choose photo</label>
+                <input type="file" id="ptPhoto" accept="image/jpeg,.jpg,.jpeg" hidden onchange="onPhotoPicked('pt', this)">
+                <button type="button" class="btn btn-outline btn-sm" id="ptPhotoRemove" style="display:none" onclick="clearPhoto('pt')">Remove</button>
+                <div class="photo-hint">JPG only &middot; up to 5 MB &middot; resized to under 2 MB automatically</div>
+            </div>
+        </div>
         <div class="form-row">
             <div class="form-group"><label>Last Name *</label><input type="text" id="ptLast"></div>
             <div class="form-group"><label>First Name *</label><input type="text" id="ptFirst"></div>
@@ -335,7 +344,15 @@
 
         <!-- STEP 2: DIAGNOSIS & TREATMENT -->
         <div class="form-step" id="formStep2" style="display: none;">
+            <!-- SYMPTOM CHECKLIST (feeds the Suggested Diagnosis panel) -->
+            <div class="form-group" id="symPickerGroup">
+                <label>Symptom Checklist <span style="font-weight:400;color:var(--muted);font-size:12px">— tick the symptoms to get suggested diagnoses</span></label>
+                <input type="text" id="symSearch" placeholder="Search symptom (e.g. fever, lagnat, ubo)..." oninput="renderSymChips()" autocomplete="off">
+                <div id="symChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:120px;overflow-y:auto"></div>
+            </div>
             <div class="form-group"><label>Symptoms</label><textarea id="recSymptoms" placeholder="Describe symptoms..."></textarea></div>
+            <!-- SUGGESTED DIAGNOSIS (decision support only — doctor confirms) -->
+            <div id="dxSuggest" style="display:none;margin-bottom:14px;border:1px solid #cfe3f1;background:#f4f9fd;border-radius:10px;padding:10px 12px"></div>
             <div class="form-group"><label>Diagnosis</label><textarea id="recDiagnosis" placeholder="Clinical diagnosis..."></textarea></div>
             <div class="form-group"><label>Treatment</label><textarea id="recTreatment" placeholder="Prescribed medicines or treatment..."></textarea></div>
                         <!-- DOCTOR PRESCRIPTIONS -->
@@ -872,14 +889,214 @@ function renderTable(patients) {
         <tr onclick="openProfile(${p.patient_id})">
             <td style="color:var(--muted);font-size:12px">${i+1}</td>
             <td>
-                <strong>${escapeHtml(p.last_name)}, ${escapeHtml(p.first_name)}</strong>
-                ${p.middle_name ? `<span style="font-size:11px;color:var(--muted)"> ${escapeHtml(p.middle_name)}</span>` : ''}
+                <div class="pt-namecell">
+                    <span class="pt-thumb" data-pid="${p.patient_id}">${escapeHtml((p.first_name.charAt(0) + p.last_name.charAt(0)).toUpperCase())}</span>
+                    <div>
+                        <strong>${escapeHtml(p.last_name)}, ${escapeHtml(p.first_name)}</strong>
+                        ${p.middle_name ? `<span style="font-size:11px;color:var(--muted)"> ${escapeHtml(p.middle_name)}</span>` : ''}
+                    </div>
+                </div>
             </td>
             <td>${p.age} yrs &nbsp;<span class="badge badge-${p.sex==='Male'?'male':'female'}">${p.sex}</span></td>
             <td style="font-size:13px">${escapeHtml(p.contact_number||'—')}</td>
             <td style="font-size:12px;color:var(--muted)">${escapeHtml(p.philhealth_no||'—')}</td>
             <td><button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openProfile(${p.patient_id})">View Profile</button></td>
         </tr>`).join('');
+    hydrateThumbs(patients);
+}
+
+/* ── PATIENT PHOTO (JPG only; server re-checks everything) ── */
+const PHOTO_SRC_MAX  = 5 * 1024 * 1024;   // largest original the user may pick
+const PHOTO_SEND_MAX = 2 * 1024 * 1024;   // must match the server limit
+const PHOTO_SIDE     = 800;               // resized longest side (px)
+const PHOTO_MIN_SIDE = 64;
+const photoState = {
+    pt: { blob: null, url: null },
+    ep: { blob: null, url: null, remove: false, has: false }
+};
+const _photoCache = new Map();            // "id:version" -> blob URL
+
+function showPhotoProblem(msg) {
+    console.error('Patient photo problem:', msg);
+    let b = document.getElementById('photoProblem');
+    if (!b) {
+        b = document.createElement('div'); b.id = 'photoProblem'; b.setAttribute('role', 'alert');
+        b.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:100000;max-width:min(640px,92vw);background:#fff1f0;color:#8a1c1c;border:1px solid #f1b5b0;border-radius:10px;padding:12px 40px 12px 14px;font-size:13px;line-height:1.5;box-shadow:0 8px 24px rgba(0,0,0,.18)';
+        const x = document.createElement('button'); x.type = 'button'; x.textContent = '\u2715'; x.setAttribute('aria-label', 'Dismiss');
+        x.style.cssText = 'position:absolute;top:6px;right:8px;border:0;background:none;font-size:15px;cursor:pointer;color:#8a1c1c';
+        x.onclick = () => b.remove();
+        const t = document.createElement('div'); t.id = 'photoProblemText'; b.appendChild(t); b.appendChild(x);
+        document.body.appendChild(b);
+    }
+    document.getElementById('photoProblemText').textContent = msg;
+}
+
+function _authHeader() { return { 'Authorization': 'Bearer ' + sessionStorage.getItem('access_token') }; }
+
+async function validatePhotoFile(file) {
+    if (!/\.jpe?g$/i.test(file.name) || file.type !== 'image/jpeg') return 'Only JPG images are allowed.';
+    if (file.size === 0)             return 'The file is empty.';
+    if (file.size > PHOTO_SRC_MAX)   return 'Photo is too large. Please choose an image under 5 MB.';
+    const head = new Uint8Array(await file.slice(0, 3).arrayBuffer());
+    if (!(head[0] === 0xFF && head[1] === 0xD8 && head[2] === 0xFF)) return 'The file is not a valid JPEG image.';
+    return null;
+}
+
+async function resizeToJpeg(file) {
+    let bmp;
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+    catch (_) { try { bmp = await createImageBitmap(file); } catch (e) { throw new Error('Unable to read this image.'); } }
+    if (Math.min(bmp.width, bmp.height) < PHOTO_MIN_SIDE) { bmp.close && bmp.close(); throw new Error(`The image is too small (minimum ${PHOTO_MIN_SIDE} px).`); }
+    const scale = Math.min(1, PHOTO_SIDE / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(bmp, 0, 0, w, h);
+    bmp.close && bmp.close();
+    const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.85));   // re-encoding also drops EXIF/GPS
+    if (!blob) throw new Error('Unable to process the image.');
+    if (blob.size > PHOTO_SEND_MAX) throw new Error('Photo is still too large after resizing.');
+    return blob;
+}
+
+function setPhotoPreview(p, url) {
+    const box = document.getElementById(p + 'PhotoPreview');
+    box.textContent = '';
+    if (url) { const img = document.createElement('img'); img.src = url; img.alt = 'Photo preview'; box.appendChild(img); }
+    else     { const s = document.createElement('span'); s.textContent = 'No photo'; box.appendChild(s); }
+    document.getElementById(p + 'PhotoRemove').style.display = url ? '' : 'none';
+}
+
+async function onPhotoPicked(p, input) {
+    const file = input.files && input.files[0];
+    input.value = '';                                   // allow picking the same file again
+    if (!file) return;
+    const err = await validatePhotoFile(file);
+    if (err) { showToast(err, 'warning'); return; }
+    try {
+        const blob = await resizeToJpeg(file);
+        const st = photoState[p];
+        if (st.url) URL.revokeObjectURL(st.url);
+        st.blob = blob; st.url = URL.createObjectURL(blob); st.remove = false;
+        setPhotoPreview(p, st.url);
+    } catch (e) { showToast(e.message || 'Unable to read this image.', 'warning'); }
+}
+
+function clearPhoto(p) {
+    const st = photoState[p];
+    if (st.url) URL.revokeObjectURL(st.url);
+    st.blob = null; st.url = null;
+    if (p === 'ep' && st.has) st.remove = true;         // an existing photo will be deleted on save
+    setPhotoPreview(p, null);
+}
+
+function resetPhotoField(p) {
+    const st = photoState[p];
+    if (st.url) URL.revokeObjectURL(st.url);
+    st.blob = null; st.url = null;
+    if (p === 'ep') { st.remove = false; st.has = false; }
+    setPhotoPreview(p, null);
+}
+
+async function uploadPatientPhoto(id, blob) {
+    const fd = new FormData();
+    fd.append('file', blob, 'photo.jpg');
+    const res = await fetch(`${window.location.origin}/api/patients/${id}/photo`, { method: 'POST', headers: _authHeader(), body: fd });
+    if (!res.ok) { let d = ''; try { d = (await res.json()).detail; } catch (_) {} throw new Error((d || 'Upload failed.') + ' (HTTP ' + res.status + ')'); }
+    return res.json();
+}
+
+async function deletePatientPhoto(id) {
+    const res = await fetch(`${window.location.origin}/api/patients/${id}/photo`, { method: 'DELETE', headers: _authHeader() });
+    if (!res.ok) { let d = ''; try { d = (await res.json()).detail; } catch (_) {} throw new Error((d || 'Could not remove the photo.') + ' (HTTP ' + res.status + ')'); }
+}
+
+/* Photos are protected, so <img src> cannot load them. Fetch with the token and use a blob URL. */
+const _photoErrors = new Map();           // patient id -> last failure, so the UI can say WHY a photo did not appear
+async function fetchPhotoUrl(id, v) {
+    const key = id + ':' + (v || '');
+    if (_photoCache.has(key)) return _photoCache.get(key);
+    _photoErrors.delete(id);
+    const fail = (status, detail) => { _photoErrors.set(id, { status, detail }); console.warn('Patient photo not loaded: patient', id, 'HTTP', status, detail); return null; };
+    try {
+        const res = await fetch(`${window.location.origin}/api/patients/${id}/photo`, { headers: _authHeader(), cache: 'no-store' });
+        if (!res.ok) { let d = ''; try { d = (await res.json()).detail || ''; } catch (_) {} return fail(res.status, d); }
+        const blob = await res.blob();
+        if (!blob.size || !/^image\/jpeg/.test(blob.type)) return fail(res.status, 'Unexpected response (' + (blob.type || 'unknown type') + ')');
+        const url = URL.createObjectURL(blob);
+        if (_photoCache.size >= 100) { const k = _photoCache.keys().next().value; URL.revokeObjectURL(_photoCache.get(k)); _photoCache.delete(k); }
+        _photoCache.set(key, url);
+        return url;
+    } catch (e) { return fail(0, e.message); }
+}
+
+function hydrateThumbs(patients) {
+    patients.filter(p => p.has_photo).forEach(async p => {
+        const url = await fetchPhotoUrl(p.patient_id, p.photo_v);
+        const el = document.querySelector(`.pt-thumb[data-pid="${p.patient_id}"]`);
+        if (url && el) {
+            // inline styles so it still looks right even if an old patients.css is cached
+            Object.assign(el.style, { backgroundImage: `url("${url}")`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' });
+            el.textContent = '';
+        }
+    });
+}
+
+function setProfileAvatar(p, initials) {
+    const el = document.getElementById('profAvatar');
+    el.classList.remove('has-photo'); el.style.backgroundImage = ''; el.textContent = initials;   // default = initials
+    if (!p.has_photo) return;
+    fetchPhotoUrl(p.patient_id, p.photo_v).then(url => {
+        if (currentPatientId !== p.patient_id) return;
+        if (url) {
+            const img = document.createElement('img');
+            img.alt = ''; img.src = url;
+            img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+            el.textContent = ''; el.appendChild(img);
+            el.style.overflow = 'hidden'; el.classList.add('has-photo');
+        } else {
+            const e = _photoErrors.get(p.patient_id) || {};
+            showPhotoProblem(`A photo is saved for this patient but could not be loaded (HTTP ${e.status || '?'}${e.detail ? ': ' + e.detail : ''}).`);
+        }
+    });
+}
+
+let _photoJustUploaded = false;
+async function refreshProfileAvatar() {
+    const expected = _photoJustUploaded; _photoJustUploaded = false;
+    try {
+        const p = await apiGet(`/api/patients/${currentPatientId}`);
+        if (!p) return;
+        if (expected && !p.has_photo)
+            showPhotoProblem('The photo was uploaded, but the server did not record it. Restart the server so the updated patients.py is loaded, and confirm models.py has photo_filename.');
+        setProfileAvatar(p, `${p.first_name.charAt(0)}${p.last_name.charAt(0)}`.toUpperCase());
+    } catch (_) {}
+}
+
+async function uploadPendingPhoto(id) {
+    const st = photoState.pt;
+    if (!st.blob) return;
+    try {
+        await uploadPatientPhoto(id, st.blob);
+        const chk = await apiGet(`/api/patients/${id}`);          // confirm the server really recorded it
+        if (chk && !chk.has_photo)
+            showPhotoProblem('The photo was uploaded, but the server did not record it. Restart the server so the updated patients.py is loaded, and confirm models.py has photo_filename.');
+    } catch (e) { showPhotoProblem('The patient was saved, but the photo could not be uploaded: ' + e.message); }
+}
+
+async function initEditPhoto(p) {
+    resetPhotoField('ep');
+    const st = photoState.ep;
+    st.has = !!p.has_photo;
+    if (st.has) { const url = await fetchPhotoUrl(p.patient_id, p.photo_v); if (url) setPhotoPreview('ep', url); }
+}
+
+async function applyEditPhotoChanges() {
+    const st = photoState.ep;
+    try {
+        if (st.blob)        { await uploadPatientPhoto(currentPatientId, st.blob); st.has = true; _photoJustUploaded = true; }
+        else if (st.remove) { await deletePatientPhoto(currentPatientId);          st.has = false; }
+    } catch (e) { showPhotoProblem('The profile was saved, but the photo was not updated: ' + e.message); }
+    st.blob = null; st.remove = false;
 }
 
 /* ── ADD PATIENT ── */
@@ -909,6 +1126,7 @@ async function submitAddPatient() {
             father_name:      document.getElementById('ptFatherName').value.trim()       ||null
         });
         if (r) {
+            await uploadPendingPhoto(r.patient_id);
             showToast(`Patient ${r.last_name}, ${r.first_name} registered.`,'success');
             closeModal('addPatientModal');
             clearPatientForm();
@@ -924,6 +1142,7 @@ function clearPatientForm() {
     });
     document.getElementById('ptSex').selectedIndex = 0;
     document.getElementById('ptCivil').selectedIndex = 0;
+    resetPhotoField('pt');
 }
 
 /* ── PROFILE ── */
@@ -938,6 +1157,7 @@ async function openProfile(patientId) {
         // Header
         const initials = `${p.first_name.charAt(0)}${p.last_name.charAt(0)}`.toUpperCase();
         document.getElementById('profAvatar').textContent      = initials;
+        setProfileAvatar(p, initials);
         document.getElementById('profName').textContent        = `${p.last_name}, ${p.first_name} ${p.middle_name||''}`.trim();
         document.getElementById('profileBreadcrumb').textContent = `${p.last_name}, ${p.first_name}`;
         document.getElementById('pageTitle').textContent       = 'Patient Profile';
@@ -2539,6 +2759,8 @@ async function openEditPatient() {
         document.getElementById('epMotherName').value      = p.mother_name    || '';
         document.getElementById('epFatherName').value      = p.father_name    || '';
 
+        await initEditPhoto(p);
+
         // Clear any previous save message
         const msgEl = document.getElementById('epSaveMsg');
         if (msgEl) msgEl.style.display = 'none';
@@ -2591,6 +2813,7 @@ async function submitEditPatient() {
         const data = await res.json();
 
         if (res.ok) {
+            await applyEditPhotoChanges();
             // Show success message briefly
             msgEl.textContent   = 'Patient profile updated successfully.';
             msgEl.style.cssText = 'display:block;background:#e8f8f0;color:var(--teal);border-radius:8px;padding:9px 13px;font-size:13px';
@@ -2599,6 +2822,7 @@ async function submitEditPatient() {
             const fullName = `${last}, ${first} ${document.getElementById('epMiddle')?.value.trim() || ''}`.trim();
             document.getElementById('profName').textContent        = fullName;
             document.getElementById('profAvatar').textContent      = `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
+            refreshProfileAvatar();
             document.getElementById('profileBreadcrumb').textContent = `${last}, ${first}`;
             document.getElementById('infoContact').textContent     = document.getElementById('epContact')?.value.trim()     || '—';
             document.getElementById('infoPhilhealth').textContent  = document.getElementById('epPhilhealth')?.value.trim()  || '—';
@@ -2872,6 +3096,139 @@ document.addEventListener('DOMContentLoaded', async () => {
 }
 </script>
 
+<script>
+/* ============================================================
+   SYMPTOM CHECKLIST + SUGGESTED DIAGNOSIS (data-driven)
+   - Sintomas galing sa /api/diseases/symptoms (admin-managed)
+   - Suggestions galing sa /api/diseases/detect (DB weights)
+   - Suggestion lang ito: ang doktor pa rin ang magko-confirm
+   ============================================================ */
+let symList = [], symLoaded = false, symSel = new Set(), dxTimer = null, dxLast = [], dxSeq = 0;
+
+function _esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function _tokens(str) {
+    return (str || '').split(/[,;\n]/).map(t => t.trim()).filter(Boolean);
+}
+
+async function initSymptomPicker() {
+    if (!symLoaded) {
+        try {
+            symList = (await apiGet('/api/diseases/symptoms')) || [];
+            symLoaded = true;
+        } catch (e) {
+            document.getElementById('symPickerGroup').style.display = 'none';
+            return;
+        }
+    }
+    // i-sync ang pagpili base sa laman ng Symptoms textarea
+    const have = new Set(_tokens(document.getElementById('recSymptoms').value).map(t => t.toLowerCase()));
+    symSel = new Set(symList.filter(s => have.has(s.symptom_name.toLowerCase())).map(s => s.symptom_id));
+    renderSymChips();
+    scheduleDx();
+}
+
+function renderSymChips() {
+    const box = document.getElementById('symChips');
+    if (!box) return;
+    const f = (document.getElementById('symSearch').value || '').toLowerCase().trim();
+    const list = symList
+        .filter(s => !f || s.symptom_name.toLowerCase().includes(f) || (s.synonyms || '').toLowerCase().includes(f))
+        .sort((a, b) => (symSel.has(b.symptom_id) - symSel.has(a.symptom_id)) || a.symptom_name.localeCompare(b.symptom_name));
+    box.innerHTML = list.map(s => {
+        const on = symSel.has(s.symptom_id);
+        return `<button type="button" onclick="toggleSym(${s.symptom_id})" title="${_esc(s.synonyms || '')}"
+            style="cursor:pointer;border-radius:999px;padding:4px 11px;font-size:12.5px;border:1px solid ${on ? '#1a8a5e' : '#cfd8e3'};
+                   background:${on ? '#1a8a5e' : '#fff'};color:${on ? '#fff' : '#334155'}">${on ? '✓ ' : ''}${_esc(s.symptom_name)}</button>`;
+    }).join('') || '<span style="font-size:12.5px;color:var(--muted)">No symptoms found.</span>';
+}
+
+function toggleSym(id) {
+    const s = symList.find(x => x.symptom_id === id);
+    if (!s) return;
+    const ta = document.getElementById('recSymptoms');
+    let toks = _tokens(ta.value);
+    if (symSel.has(id)) {
+        symSel.delete(id);
+        toks = toks.filter(t => t.toLowerCase() !== s.symptom_name.toLowerCase());
+    } else {
+        symSel.add(id);
+        if (!toks.some(t => t.toLowerCase() === s.symptom_name.toLowerCase())) toks.push(s.symptom_name);
+    }
+    ta.value = toks.join(', ');
+    renderSymChips();
+    scheduleDx();
+}
+
+function scheduleDx() { clearTimeout(dxTimer); dxTimer = setTimeout(runDx, 250); }
+
+async function runDx() {
+    const box = document.getElementById('dxSuggest');
+    if (!box) return;
+    if (!symSel.size) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    const seq = ++dxSeq;
+    let res = null;
+    try { res = await apiPost('/api/diseases/detect', { symptom_ids: [...symSel] }); } catch (e) { res = null; }
+    if (seq !== dxSeq) return;               // may mas bago nang request
+    dxLast = res || [];
+    box.style.display = 'block';
+    const head = `<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#1a6fad;margin-bottom:8px">
+        Suggested diagnoses <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">— for the doctor to confirm</span></div>`;
+    if (!dxLast.length) {
+        box.innerHTML = head + `<div style="font-size:13px;color:var(--muted)">No matching disease in the system for these symptoms.
+            Type the diagnosis manually, or ask the admin to add the disease in <b>Manage Diseases</b>.</div>`;
+        return;
+    }
+    box.innerHTML = head + dxLast.map((d, i) => `
+        <div style="display:flex;align-items:center;gap:10px;padding:7px 0;${i ? 'border-top:1px solid #e1ecf5' : ''}">
+            <div style="flex:1;min-width:0">
+                <div style="font-size:13.5px;font-weight:600">${_esc(d.disease_name)}
+                    <span style="font-weight:400;color:var(--muted);font-size:12px">${_esc(d.icd_code || '')}</span>
+                    ${d.is_notifiable ? '<span style="background:#fdecea;color:#c0392b;font-size:10.5px;font-weight:700;border-radius:6px;padding:1px 6px;margin-left:4px">NOTIFIABLE</span>' : ''}
+                </div>
+                <div style="font-size:11.5px;color:var(--muted)">Matches: ${_esc(d.matched_symptoms.join(', '))}</div>
+                ${(d.key_symptoms && d.key_symptoms.length) ? `<div style="font-size:11.5px;color:#b7791f">⭐ Key symptom matched: ${_esc(d.key_symptoms.join(', '))}</div>` : ''}
+                <div style="height:5px;background:#e3edf5;border-radius:4px;margin-top:5px;overflow:hidden">
+                    <div style="height:100%;width:${Math.min(100, d.score)}%;background:#1a6fad"></div></div>
+            </div>
+            <div style="font-size:13px;font-weight:700;color:#1a6fad;min-width:46px;text-align:right">${d.score}%</div>
+            <button type="button" class="btn btn-outline btn-sm" onclick="useDx(${i})">Use</button>
+        </div>`).join('');
+}
+
+function useDx(i) {
+    const d = dxLast[i];
+    if (!d) return;
+    const ta = document.getElementById('recDiagnosis');
+    const toks = _tokens(ta.value);
+    if (!toks.some(t => t.toLowerCase() === d.disease_name.toLowerCase())) toks.push(d.disease_name);
+    ta.value = toks.join(', ');
+    if (typeof showToast === 'function') showToast(`"${d.disease_name}" added to Diagnosis. Please review before saving.`, 'success');
+}
+
+/* ── Hooks: tumatakbo kapag binuksan ang Step 2 o in-reset ang form ── */
+(function () {
+    const _go = goToStep;
+    goToStep = function (step) { _go(step); if (step === 2) initSymptomPicker(); };
+
+    if (typeof openDoctorDiagnosis === 'function') {
+        const _od = openDoctorDiagnosis;
+        openDoctorDiagnosis = async function (id) { await _od(id); initSymptomPicker(); };
+    }
+    if (typeof clearRecordForm === 'function') {
+        const _cl = clearRecordForm;
+        clearRecordForm = function () {
+            _cl();
+            symSel = new Set(); dxLast = [];
+            const s = document.getElementById('symSearch'); if (s) s.value = '';
+            const b = document.getElementById('dxSuggest'); if (b) { b.style.display = 'none'; b.innerHTML = ''; }
+            if (symLoaded) renderSymChips();
+        };
+    }
+})();
+</script>
+
 <!-- ===== EDIT PATIENT MODAL ===== -->
 <div class="modal-overlay" id="editPatientModal">
 <div class="modal modal-lg">
@@ -2880,6 +3237,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         <button class="modal-close" onclick="closeModal('editPatientModal')">&#x2715;</button>
     </div>
     <div class="modal-body">
+        <div class="photo-field">
+            <div class="photo-preview" id="epPhotoPreview" role="img" aria-label="Patient photo preview"><span>No photo</span></div>
+            <div class="photo-ctrl">
+                <label class="btn btn-outline btn-sm" for="epPhoto">Choose photo</label>
+                <input type="file" id="epPhoto" accept="image/jpeg,.jpg,.jpeg" hidden onchange="onPhotoPicked('ep', this)">
+                <button type="button" class="btn btn-outline btn-sm" id="epPhotoRemove" style="display:none" onclick="clearPhoto('ep')">Remove</button>
+                <div class="photo-hint">JPG only &middot; up to 5 MB &middot; resized to under 2 MB automatically</div>
+            </div>
+        </div>
         <div class="form-row">
             <div class="form-group"><label>Last Name *</label><input type="text" id="epLast"></div>
             <div class="form-group"><label>First Name *</label><input type="text" id="epFirst"></div>

@@ -13,6 +13,9 @@
     const PAL = [NAVY, '#2255c4', '#14b8a6', '#f59e0b', MUTED];
     const S = { tab: 'trends', result: null, disease: '__top', area: '__all', cat: 'all', charts: {}, narrativeSummary: '', pickerReady: false, token: 0 };
 
+    // Para sa Resource Allocation module (resource-insights.js)
+    window.AIInsightsCtx = { range: () => ({ start: $('aiStartDate')?.value, end: $('aiEndDate')?.value }) };
+
     const LEVEL_TEXT = { insufficient: 'Insufficient data', limited: 'Limited data', moderate: 'Moderate data', good: 'Sufficient data' };
     const CONF_TEXT = { high: 'High confidence', moderate: 'Moderate confidence', low: 'Low confidence', insufficient: 'Insufficient data' };
     const CAT_REF = {
@@ -74,7 +77,7 @@
     /* ---------- shell ---------- */
     function renderShell() {
         const r = S.result, s = r.sufficiency;
-        const tabs = [['trends', 'Disease Trends'], ['seasonal', 'Seasonal Monitoring'], ['area', 'Area Monitoring'], ['forecast', 'Forecasting']];
+        const tabs = [['trends', 'Disease Trends'], ['seasonal', 'Seasonal Monitoring'], ['area', 'Area Monitoring'], ['forecast', 'Forecasting'], ['resources', 'Resource Allocation']];
         $('aiRoot').innerHTML = `
         <div class="ai-banner lvl-${s.level}">
             <div class="ai-banner-main">
@@ -99,8 +102,11 @@
     function renderTab() {
         Object.values(S.charts).forEach(c => c.destroy()); S.charts = {};
         const p = $('aiPanels'); if (!p) return;
-        p.innerHTML = { trends: tabTrends, seasonal: tabSeasonal, area: tabArea, forecast: tabForecast }[S.tab]();
-        ({ trends: mountTrends, seasonal: mountSeasonal, area: mountArea, forecast: () => { } })[S.tab]();
+        $('aiRoot').classList.toggle('ai-res-mode', S.tab === 'resources');   // itago ang disease banner sa Resource tab
+        p.innerHTML = { trends: tabTrends, seasonal: tabSeasonal, area: tabArea, forecast: tabForecast,
+            resources: () => window.ResourceUI ? window.ResourceUI.html() : emptyMsg('Resource Allocation module is not loaded.') }[S.tab]();
+        ({ trends: mountTrends, seasonal: mountSeasonal, area: mountArea, forecast: () => { },
+            resources: () => { if (window.ResourceUI) window.ResourceUI.mount(); } })[S.tab]();
     }
 
     /* ---------- chart builders (shared by screen and print) ---------- */
@@ -284,6 +290,7 @@
 
     /* ---------- export / print ---------- */
     window.printAIInsights = function () {
+        if (S.tab === 'resources' && window.ResourceUI) { window.ResourceUI.print(); return; }   // Resource Allocation report
         const r = S.result; if (!r) { showToast('Load AI Insights first.', 'error'); return; }
         const top = r.monitored.slice(0, 3), sea = r.seasonal, h = r.heat, A = E.analyzeArea(r, null);
         const trendImgs = (top.length ? top : [r.diseases[0]]).filter(Boolean).map(d => ({ d, img: imgOf(trendConfig(d)) }));

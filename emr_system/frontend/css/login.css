@@ -260,10 +260,11 @@ img.logo1 {
     border: 1px solid rgba(255, 255, 255, .20);
     border-radius: 9px;
     color: var(--white);
+    caret-color: var(--white);
     font-family: var(--font);
     font-size: 14px;
     outline: none;
-    transition: all .18s;
+    transition: border-color .18s, box-shadow .18s;   /* replace: all .18s */
 }
 
 .field input::placeholder {
@@ -280,11 +281,10 @@ img.logo1 {
 .field input:-webkit-autofill,
 .field input:-webkit-autofill:hover, 
 .field input:-webkit-autofill:focus {
-    -webkit-box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08) !important;
+    -webkit-box-shadow: 0 0 0 3px rgba(255,255,255,.08) !important;
     -webkit-text-fill-color: var(--white) !important;
+    caret-color: var(--white) !important;
     font-family: var(--font) !important;
-    
-    /* Kung gusto mo ring lagyan ng transition para sa background */
     transition: background-color 5000s ease-in-out 0s;
 }
 

@@ -223,7 +223,7 @@
     function showUnlockError(msg) {
         const el = $('unlockError');
         if (!el) return;
-        el.textContent = '⚠️ ' + msg;
+        el.textContent = <i class="fa-solid fa-triangle-exclamation"></i> + msg;
         el.style.display = 'block';
     }
 

@@ -236,11 +236,71 @@ PERMISSIONS = {
 },
 }
 
+# ============================================================
+# DISEASE SURVEILLANCE PERMISSIONS
+# ============================================================
+
+SURVEILLANCE_PERMISSIONS = {
+
+    "admin": {
+
+        "view": True,
+        "validate": True,
+        "reject": True,
+
+    },
+
+    "doctor": {
+
+        "view": True,
+        "validate": True,
+        "reject": True,
+
+    },
+
+    "bhw": {
+
+        "view": True,
+        "validate": False,
+        "reject": False,
+
+    },
+
+    "midwife": {
+
+        "view": True,
+        "validate": False,
+        "reject": False,
+
+    },
+
+    "nurse": {
+
+        "view": True,
+        "validate": False,
+        "reject": False,
+
+    },
+}
 
 def get_permission(role: str, resource: str) -> str:
     """Return permission level: 'edit', 'view', or 'none'."""
     return PERMISSIONS.get(role, {}).get(resource, "none")
 
+# ============================================================
+# SURVEILLANCE PERMISSION GETTER
+# ============================================================
+
+def get_surveillance_permission(
+    role: str,
+    action: str
+) -> bool:
+
+    return (
+        SURVEILLANCE_PERMISSIONS
+        .get(role, {})
+        .get(action, False)
+    )
 
 def require_permission(resource: str, level: str = "view"):
     """
@@ -261,4 +321,49 @@ def require_permission(resource: str, level: str = "view"):
                 detail=f"Your role ({current_user.role}) does not have access to {resource}."
             )
         return current_user
+    return _check
+
+# ============================================================
+# SURVEILLANCE PERMISSION DEPENDENCY
+# ============================================================
+
+def require_surveillance_permission(
+    action: str
+):
+
+    allowed_actions = [
+        "view",
+        "validate",
+        "reject"
+    ]
+
+    if action not in allowed_actions:
+
+        raise ValueError(
+            "Invalid surveillance action. "
+            "Use: view, validate, or reject."
+        )
+
+    async def _check(
+        current_user: User = Depends(get_current_user)
+    ):
+
+        allowed = get_surveillance_permission(
+            current_user.role,
+            action
+        )
+
+        if not allowed:
+
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Your role ({current_user.role}) "
+                    f"does not have permission to "
+                    f"{action} disease surveillance records."
+                )
+            )
+
+        return current_user
+
     return _check

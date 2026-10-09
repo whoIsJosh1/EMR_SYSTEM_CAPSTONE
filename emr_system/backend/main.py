@@ -5,7 +5,7 @@
 # - Clean routes: auth, users, patients, analytics, reports
 # ============================================================
 
-import os, time
+import os, re, time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,12 +33,15 @@ from middleware.auth import (
 from routers.auth      import router as auth_router
 from routers.users     import router as users_router
 from routers.patients  import router as patients_router
-from routers.analytics import router as analytics_router
+from routers.analytics import router as analytics_router, ensure_case_schema
 from routers.reports   import router as reports_router
 from routers.inventory import router as inventory_router
 from routers.prescriptions import router as prescriptions_router
 from routers.websocket import router as websocket_router
 from routers import ai_insights
+from routers import ai_resources   # Resource Allocation Analysis (admin only)
+from routers.diseases import router as diseases_router, ensure_schema as ensure_disease_schema
+from routers.analytics_geo import router as analytics_geo_router   # Geographical Hotspots tab
 
 # ── Rate limiter ──────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
@@ -102,7 +105,7 @@ async def create_medical_record(
     # Auto-count disease cases from diagnosis field
     diagnosis = body.get("diagnosis", "") or ""
     if diagnosis:
-        _auto_count_cases(db, diagnosis, patient_id, body.get("visit_date"), current_user.user_id)
+        _auto_count_cases(db, diagnosis, patient_id, body.get("visit_date"), current_user.user_id, role=current_user.role)
 
     return {"message": "Medical record saved.", "record_id": rec.record_id}
 
@@ -225,7 +228,8 @@ async def update_medical_record(
             diagnosis,
             record.patient_id,
             record.visit_date,
-            current_user.user_id
+            current_user.user_id,
+            role=current_user.role
         )
 
     return {
@@ -475,15 +479,7 @@ async def update_pregnancy(
     return {"message": "Pregnancy record updated."}
 
 
-# Disease + Cases Router
-disease_router = APIRouter(prefix="/api/diseases", tags=["Diseases"])
-
-@disease_router.get("/")
-async def get_diseases(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """Kunin ang master list ng lahat ng sakit."""
-    diseases = db.query(Disease).order_by(Disease.disease_name).all()
-    return [{"disease_id": d.disease_id, "disease_name": d.disease_name,
-             "icd_code": d.icd_code, "category": d.category} for d in diseases]
+# Disease router → routers/diseases.py (dynamic, DB-driven)
 
 
 # Audit Log Router
@@ -513,53 +509,55 @@ async def get_audit_logs(
     ]
 
 
-# ── Auto disease case counting ────────────────────────────────────────────
-DISEASE_PATTERNS = [
-    (r'(flu|influenza|gripe)',                                  'Influenza'),
-    (r'(dengue|dhf|dengue hemorrhagic)',                        'Dengue Fever'),
-    (r'(tuberculosis|\btb\b|pulmonary tb)',                     'Tuberculosis'),
-    (r'(covid-?19|coronavirus|sars-cov)',                       'COVID-19'),
-    (r'(hypertension|htn|high blood pressure)',                 'Hypertension'),
-    (r'(diabetes mellitus|diabetic|\bdm\b|dm type)',            'Diabetes Mellitus'),
-    (r'(pneumonia|pneumonitis)',                                 'Pneumonia'),
-    (r'(diarrhea|diarrhoea|gastroenteritis|lbm)',               'Diarrhea'),
-    (r'(leptospirosis)',                                         'Leptospirosis'),
-    (r'(typhoid fever|typhoid|enteric fever)',                   'Typhoid Fever'),
-    (r'(acute respiratory infection|ari|urti|nasopharyngitis)', 'Acute Respiratory Infection'),
-    (r'(chickenpox|varicella)',                                  'Chickenpox'),
-    (r'(measles|tigdas|rubeola)',                               'Measles'),
-    (r'(\basthma\b|bronchial asthma)',                          'Asthma'),
-    (r'(malnutrition|malnourished)',                            'Malnutrition'),
-]
+# ── Auto disease case counting (DB-driven — walang hardcoded na sakit) ────
+CASE_SOURCE_ROLES = ("doctor",)   # tanging diagnosis ng doctor ang nagiging surveillance case
 
-def _auto_count_cases(db: Session, diagnosis: str, patient_id: int, date_recorded: str, user_id: int):
+def _auto_count_cases(db: Session, diagnosis: str, patient_id: int, date_recorded, user_id: int, role=None):
     """
-    I-auto count ang disease cases mula sa diagnosis field.
-    Ginagamit ang regex patterns para i-normalize ang mga variant
-    ng parehong sakit (e.g. "mild flu", "severe flu" → Influenza).
-    Health problems (allergies, asthma) ay HINDI kasama dito.
+    I-match ang diagnosis text sa LAHAT ng active na sakit sa `disease` table
+    gamit ang pangalan, ICD code, at aliases nito. Kapag nagdagdag ang admin ng
+    bagong sakit sa Manage Diseases, awtomatiko na itong mabibilang dito.
     """
     import re
-    text = diagnosis.lower()
-    detected = set()
-    for pattern, disease_name in DISEASE_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            detected.add(disease_name)
+    from sqlalchemy import text as sql
+    text_ = (diagnosis or "").lower()
+    if not text_.strip() or role not in CASE_SOURCE_ROLES:
+        return
 
-    for dname in detected:
-        disease = db.query(Disease).filter(Disease.disease_name == dname).first()
-        if not disease:
+    rows = db.execute(sql(
+        "SELECT disease_id, disease_name, icd_code, aliases, is_notifiable FROM disease WHERE is_active = 1"
+    )).mappings().all()
+
+    notif = {r["disease_id"]: bool(r["is_notifiable"]) for r in rows}
+    detected = set()
+    for r in rows:
+        terms = [r["disease_name"], r["icd_code"]] + (r["aliases"] or "").split(",")
+        for t in terms:
+            t = (t or "").strip().lower()
+            if len(t) < 2:
+                continue
+            if re.search(r"(?<!\w)" + re.escape(t) + r"(?!\w)", text_):
+                detected.add(r["disease_id"])
+                break
+
+    added = False
+    for did in detected:
+        # iwas double-count kapag ina-update ang parehong record
+        exists = db.query(DiseaseCase).filter(
+            DiseaseCase.disease_id == did,
+            DiseaseCase.patient_id == patient_id,
+            DiseaseCase.date_recorded == date_recorded
+        ).first()
+        if exists:
             continue
-        case = DiseaseCase(
-            disease_id      = disease.disease_id,
-            patient_id      = patient_id,
-            date_recorded   = date_recorded,
-            number_of_cases = 1,
-            remarks         = f"Auto-recorded from diagnosis: {diagnosis[:100]}",
-            user_id         = user_id
-        )
-        db.add(case)
-    if detected:
+        db.add(DiseaseCase(
+            disease_id=did, patient_id=patient_id, date_recorded=date_recorded,
+            number_of_cases=1, remarks=f"Auto-recorded from diagnosis: {diagnosis[:100]}",
+            user_id=user_id,
+            case_status="Suspected" if notif.get(did) else "Confirmed"   # notifiable lang ang dumadaan sa validation
+        ))
+        added = True
+    if added:
         db.commit()
 
 
@@ -572,6 +570,9 @@ async def lifespan(app: FastAPI):
         InventoryItem.__table__.create(bind=engine, checkfirst=True)
         InventoryTransaction.__table__.create(bind=engine, checkfirst=True)
         print("✅ Inventory tables are ready.")
+        ensure_disease_schema(engine)
+        ensure_case_schema(engine)
+        print("✅ Disease tables are ready.")
 
     print("✅ Ready.")
     yield
@@ -603,6 +604,21 @@ app.add_middleware(
     allow_headers     = ["Authorization","Content-Type"],
     max_age           = 600
 )
+
+# Reject oversized patient-photo uploads BEFORE the request body is read.
+# (Registered before the security-headers middleware so that middleware still wraps this response.)
+_PHOTO_PATH        = re.compile(r"^/api/patients/\d+/photo$")
+_PHOTO_MAX_REQUEST = 3 * 1024 * 1024      # 2 MB file limit + multipart overhead
+
+@app.middleware("http")
+async def limit_photo_upload_size(request: Request, call_next):
+    if request.method == "POST" and _PHOTO_PATH.match(request.url.path):
+        cl = request.headers.get("content-length")
+        if cl is None or not cl.isdigit():
+            return JSONResponse({"detail": "Content-Length is required."}, status_code=411)
+        if int(cl) > _PHOTO_MAX_REQUEST:
+            return JSONResponse({"detail": "Photo is too large (maximum 2 MB)."}, status_code=413)
+    return await call_next(request)
 
 # Security headers middleware
 @app.middleware("http")
@@ -638,16 +654,17 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(patients_router)
 app.include_router(analytics_router)
+app.include_router(analytics_geo_router)
 app.include_router(ai_insights.router)   # AI Insights (admin only)
+app.include_router(ai_resources.router)  # Resource Allocation Analysis (admin only)
 app.include_router(reports_router)
 app.include_router(mr_router)
 app.include_router(immun_router)
 app.include_router(hp_router)
 app.include_router(preg_router)
-app.include_router(disease_router)
+app.include_router(diseases_router)
 app.include_router(audit_router)
 app.include_router(inventory_router)
-app.include_router(mr_router)
 app.include_router(prescriptions_router)
 app.include_router(websocket_router)
 # Static files
